@@ -47,6 +47,8 @@ class SchemaTree {
 
     let html = '';
 
+    const columnsByTable = this.currentData.columns_by_table || {};
+
     // 1. Tables Group
     html += this.renderGroup(
       'tables',
@@ -54,9 +56,15 @@ class SchemaTree {
       'table',
       fTables.length,
       tables.length,
-      fTables.map(t => `
+      fTables.map(t => {
+        const cols = columnsByTable[t.name] || [];
+        let tooltip = `Tabla: ${t.name} (${t.approx_rows ?? 0} filas aprox)`;
+        if (cols.length > 0) {
+          tooltip += `\n\nColumnas (${cols.length}):\n` + cols.map((c, i) => ` ${i + 1}. ${c.name} : ${(c.full_type || c.data_type || '').toUpperCase()}`).join('\n');
+        }
+        return `
         <div class="tree-item" data-type="table" data-name="${t.name}">
-          <div class="tree-item-name" title="${t.name} (${t.approx_rows ?? 0} filas)">
+          <div class="tree-item-name" title="${tooltip}">
             <i data-lucide="table" style="width:13px; height:13px; color:#60a5fa;"></i>
             <span>${t.name}</span>
           </div>
@@ -66,7 +74,8 @@ class SchemaTree {
             <button class="action-icon act-query" title="Generar SELECT"><i data-lucide="file-plus" style="width:12px; height:12px;"></i></button>
           </div>
         </div>
-      `).join('')
+      `;
+      }).join('')
     );
 
     // 2. Views Group

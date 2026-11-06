@@ -540,6 +540,7 @@ function initMonacoLoader() {
         }
 
         registerSqlCompletions();
+        registerSqlHoverProvider();
         resolve(window.monaco);
       });
     } else {
@@ -1270,6 +1271,154 @@ function registerSqlCompletions() {
   });
 }
 
+// Register SQL Hover Provider: Show table columns (NAME & DATA TYPE) after 1s delay
+function registerSqlHoverProvider() {
+  if (!window.monaco) return;
+
+  monaco.languages.registerHoverProvider('sql', {
+    provideHover: (model, position) => {
+      let wordAtPosition = model.getWordAtPosition(position);
+      let hoveredWord = wordAtPosition ? wordAtPosition.word : null;
+
+      // Fallback: check if cursor is on/inside backtick identifier `table_name`
+      if (!hoveredWord) {
+        const lineContent = model.getLineContent(position.lineNumber);
+        const col = position.column;
+        const regex = /[`"']([a-zA-Z0-9_]+)[`"']/g;
+        let m;
+        while ((m = regex.exec(lineContent)) !== null) {
+          const startCol = m.index + 1;
+          const endCol = startCol + m[0].length;
+          if (col >= startCol && col <= endCol) {
+            hoveredWord = m[1];
+            wordAtPosition = {
+              word: m[1],
+              startColumn: startCol,
+              endColumn: endCol
+            };
+            break;
+          }
+        }
+      }
+
+      if (!hoveredWord) return null;
+
+      // Ignore SQL keywords unless it is an explicitly registered table
+      const SQL_KEYWORDS = new Set([
+        'SELECT', 'FROM', 'WHERE', 'JOIN', 'INNER', 'LEFT', 'RIGHT', 'FULL', 'CROSS',
+        'ON', 'AND', 'OR', 'NOT', 'IN', 'IS', 'NULL', 'ORDER', 'GROUP', 'BY', 'HAVING',
+        'LIMIT', 'OFFSET', 'UNION', 'ALL', 'AS', 'INTO', 'VALUES', 'SET', 'UPDATE',
+        'DELETE', 'INSERT', 'CREATE', 'TABLE', 'DROP', 'ALTER', 'CASE', 'WHEN', 'THEN',
+        'ELSE', 'END', 'LIKE', 'BETWEEN', 'EXISTS', 'DISTINCT', 'ASC', 'DESC'
+      ]);
+
+      let resolvedTableName = null;
+      let matchedAlias = null;
+
+      // 1. Direct match with a table in current database schema
+      const directTable = schemaTables.find(t => t.name.toLowerCase() === hoveredWord.toLowerCase());
+      if (directTable) {
+        resolvedTableName = directTable.name;
+      } else {
+        const directKey = Object.keys(schemaColumnsMap).find(k => k.toLowerCase() === hoveredWord.toLowerCase());
+        if (directKey) {
+          resolvedTableName = directKey;
+        }
+      }
+
+      // 2. If not a direct table match and not a reserved keyword, check if it's an alias in this query
+      if (!resolvedTableName && !SQL_KEYWORDS.has(hoveredWord.toUpperCase())) {
+        const queryTables = extractQueryTableAliases(model.getValue());
+        const foundAlias = queryTables.find(t => t.alias && t.alias.toLowerCase() === hoveredWord.toLowerCase());
+        if (foundAlias) {
+          resolvedTableName = Object.keys(schemaColumnsMap).find(
+            t => t.toLowerCase() === foundAlias.name.toLowerCase()
+          ) || foundAlias.name;
+          matchedAlias = foundAlias.alias;
+        }
+      }
+
+      // 3. Fallback: check if hoveredWord is a column of a known table
+      if (!resolvedTableName && !SQL_KEYWORDS.has(hoveredWord.toUpperCase())) {
+        const matchingCols = [];
+        Object.keys(schemaColumnsMap).forEach(tName => {
+          (schemaColumnsMap[tName] || []).forEach(col => {
+            if (col.name.toLowerCase() === hoveredWord.toLowerCase()) {
+              matchingCols.push({ table: tName, col });
+            }
+          });
+        });
+
+        if (matchingCols.length > 0) {
+          let colMd = `### 🏷️ Columna: \`${matchingCols[0].col.name}\`\n\n`;
+          matchingCols.forEach(item => {
+            const typeStr = (item.col.full_type || item.col.data_type || 'desconocido').toUpperCase();
+            colMd += `- **Tabla:** \`${item.table}\` • **Tipo:** \`${typeStr}\`\n`;
+          });
+
+          return {
+            range: new monaco.Range(
+              position.lineNumber,
+              wordAtPosition.startColumn,
+              position.lineNumber,
+              wordAtPosition.endColumn
+            ),
+            contents: [{ value: colMd }]
+          };
+        }
+
+        return null;
+      }
+
+      if (!resolvedTableName) return null;
+
+      // Retrieve columns for this table (case-insensitive lookup)
+      let columns = schemaColumnsMap[resolvedTableName];
+      if (!columns) {
+        const actualKey = Object.keys(schemaColumnsMap).find(k => k.toLowerCase() === resolvedTableName.toLowerCase());
+        if (actualKey) columns = schemaColumnsMap[actualKey];
+      }
+      columns = columns || [];
+
+      // Find approx row count
+      const tableInfo = schemaTables.find(t => t.name.toLowerCase() === resolvedTableName.toLowerCase());
+      const approxRows = tableInfo?.approx_rows != null ? tableInfo.approx_rows : null;
+
+      // Build rich markdown table with NAME and DATA TYPE of each column
+      let md = `### 📋 Tabla: \`${resolvedTableName}\`${matchedAlias ? ` *(Alias: \`${matchedAlias}\`)*` : ''}\n\n`;
+
+      if (approxRows !== null) {
+        md += `> **${columns.length} columna${columns.length === 1 ? '' : 's'}** • *~${approxRows.toLocaleString()} filas aprox.*\n\n`;
+      } else {
+        md += `> **${columns.length} columna${columns.length === 1 ? '' : 's'}**\n\n`;
+      }
+
+      if (columns.length > 0) {
+        md += `| # | Nombre de Columna | Tipo de Dato |\n`;
+        md += `| :-: | :--- | :--- |\n`;
+        columns.forEach((col, idx) => {
+          const typeStr = (col.full_type || col.data_type || 'desconocido').toUpperCase();
+          md += `| ${idx + 1} | **\`${col.name}\`** | \`${typeStr}\` |\n`;
+        });
+      } else {
+        md += `*(No se encontraron columnas cargadas para esta tabla)*\n`;
+      }
+
+      return {
+        range: new monaco.Range(
+          position.lineNumber,
+          wordAtPosition.startColumn,
+          position.lineNumber,
+          wordAtPosition.endColumn
+        ),
+        contents: [
+          { value: md }
+        ]
+      };
+    }
+  });
+}
+
 // Update autocomplete items with current database schema
 function updateSchemaCompletions(tables, columnsMap = {}, foreignKeys = []) {
   schemaTables = Array.isArray(tables) ? tables : [];
@@ -1295,6 +1444,10 @@ async function createEditor(domElement, initialValue = '', onRunCallback = null,
       lineNumbers: 'on',
       roundedSelection: true,
       padding: { top: 10, bottom: 10 },
+      hover: {
+        enabled: true,
+        delay: 1000 // Activarse luego de 1 segundo de estar el cursor sobre el texto
+      },
       suggestOnTriggerCharacters: true,
       quickSuggestions: {
         other: true,

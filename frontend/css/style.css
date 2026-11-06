@@ -1067,3 +1067,42 @@ body {
   border-left: 3px solid #f59e0b;
   white-space: pre-wrap;
 }
+
+/* Monaco Hover Widget Styling for Table Columns */
+.monaco-hover {
+  border: 1px solid #3f3f46 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.6), 0 8px 10px -6px rgba(0, 0, 0, 0.4) !important;
+  background-color: #1e1e24 !important;
+}
+
+.monaco-hover .hover-contents {
+  padding: 10px 14px !important;
+  font-size: 12px !important;
+}
+
+.monaco-hover .hover-contents table {
+  border-collapse: collapse !important;
+  margin-top: 8px !important;
+  width: 100% !important;
+  font-size: 11px !important;
+}
+
+.monaco-hover .hover-contents table th {
+  background: #27272a !important;
+  color: #93c5fd !important;
+  text-align: left !important;
+  padding: 5px 8px !important;
+  border-bottom: 1px solid #3f3f46 !important;
+  font-weight: 600 !important;
+}
+
+.monaco-hover .hover-contents table td {
+  padding: 4px 8px !important;
+  border-bottom: 1px solid #27272a !important;
+  color: #d4d4d8 !important;
+}
+
+.monaco-hover .hover-contents table tr:hover td {
+  background: rgba(255, 255, 255, 0.05) !important;
+}
