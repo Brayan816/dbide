@@ -1271,7 +1271,7 @@ function registerSqlCompletions() {
   });
 }
 
-// Register SQL Hover Provider: Show table columns (NAME & DATA TYPE) after 1s delay
+// Register SQL Hover Provider: Show table columns (NAME & DATA TYPE) after 0.3s delay
 function registerSqlHoverProvider() {
   if (!window.monaco) return;
 
@@ -1446,7 +1446,7 @@ async function createEditor(domElement, initialValue = '', onRunCallback = null,
       padding: { top: 10, bottom: 10 },
       hover: {
         enabled: true,
-        delay: 1000 // Activarse luego de 1 segundo de estar el cursor sobre el texto
+        delay: 300 // Activarse luego de 0.3s (300ms) de estar el cursor sobre el texto
       },
       suggestOnTriggerCharacters: true,
       quickSuggestions: {
