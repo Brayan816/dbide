@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MySQL IDE & Debugger</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2338bdf8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><ellipse cx='12' cy='5' rx='9' ry='3'/><path d='M3 5V19A9 3 0 0 0 21 19V5'/><path d='M3 12A9 3 0 0 0 21 12'/></svg>">
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Monaco Editor Loader -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+  <link rel="stylesheet" href="/static/css/style.css?v=20261106_10">
+</head>
+<body>
+  <!-- App Header -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="connection-badge" id="activeConnectionBadge">
+        <span class="status-dot" id="statusDot"></span>
+        <span id="connectionText">Desconectado</span>
+        <span class="env-pill" id="activeEnvBadge" style="display:none;"></span>
+      </div>
+
+      <select class="db-selector" id="databaseSelect" title="Seleccionar Base de Datos">
+        <option value="">-- Sin Base de Datos --</option>
+      </select>
+      <button class="btn btn-icon btn-sm" id="btnRefreshDatabases" title="Sincronizar base de datos y tablas">
+        <i data-lucide="refresh-cw"></i>
+      </button>
+    </div>
+
+    <div class="header-actions">
+      <button class="btn btn-primary" id="btnManageConnections">
+        <i data-lucide="plug"></i> Conexiones
+      </button>
+      <button class="btn" id="btnNewQuery">
+        <i data-lucide="plus"></i> Nueva Query
+      </button>
+      <button class="btn" id="btnOpenSavedQueries" title="Ver consultas SQL guardadas">
+        <i data-lucide="bookmark"></i> Guardadas
+      </button>
+      <button class="btn" id="btnOpenHistory" title="Ver registro de SELECT, UPDATE, DELETE...">
+        <i data-lucide="history"></i> Registro de Consultas
+      </button>
+      <button class="btn btn-icon" id="btnShortcuts" title="Atajos de teclado">
+        <i data-lucide="keyboard"></i>
+      </button>
+    </div>
+  </header>
+
+  <!-- App Body -->
+  <div class="app-body">
+    <!-- Left Sidebar: Object Browser -->
+    <aside class="app-sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-title-row">
+          <span>Explorador</span>
+        </div>
+        <input type="text" class="search-box" id="schemaFilterInput" placeholder="Filtrar tablas, procedimientos...">
+      </div>
+
+      <div class="sidebar-tree" id="schemaTree">
+        <div class="empty-state">
+          <i data-lucide="database-zap" class="empty-state-icon"></i>
+          <p>Conéctate a una base de datos para explorar objetos</p>
+          <button class="btn btn-primary btn-sm" style="margin-top:10px;" id="btnSidebarConnect">Conectar</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Right Workspace: Multi-tabs + Editor + Results -->
+    <main class="app-workspace">
+      <!-- Tabs Bar -->
+      <div class="tabs-bar" id="tabsBar">
+        <!-- Tabs rendered dynamically -->
+        <div class="tab-add" id="tabAddBtn" title="Nueva Pestaña de Query">+</div>
+      </div>
+
+      <!-- Tab Content Area -->
+      <div class="tab-content-area" id="tabContentArea">
+        <!-- Panes rendered dynamically -->
+      </div>
+
+      <!-- Splitter Resizer -->
+      <div class="panel-resizer" id="panelResizer"></div>
+
+      <!-- Bottom Results Panel -->
+      <div class="results-panel" id="resultsPanel">
+        <div class="results-header">
+          <div class="results-nav">
+            <button class="results-tab-btn active" data-target="panelResults">
+              <i data-lucide="table-2" style="width:14px; height:14px; vertical-align:middle;"></i> Resultados
+            </button>
+            <button class="results-tab-btn" data-target="panelMessages">
+              <i data-lucide="terminal" style="width:14px; height:14px; vertical-align:middle;"></i> Mensajes
+            </button>
+            <button class="results-tab-btn" data-target="panelHistoryDock" id="tabBtnHistoryDock">
+              <i data-lucide="history" style="width:14px; height:14px; vertical-align:middle;"></i> Registro (Log)
+            </button>
+            <button class="results-tab-btn" data-target="panelExplain">
+              <i data-lucide="activity" style="width:14px; height:14px; vertical-align:middle;"></i> Plan EXPLAIN
+            </button>
+          </div>
+
+          <div class="results-toolbar">
+            <span id="resultStatsBadge" style="font-size:11px; color:var(--text-muted); margin-right:8px;"></span>
+            <button class="btn btn-sm" id="btnExportCsv" title="Exportar resultados a CSV">
+              <i data-lucide="file-spreadsheet"></i> CSV
+            </button>
+            <button class="btn btn-sm" id="btnExportJson" title="Exportar resultados a JSON">
+              <i data-lucide="file-code"></i> JSON
+            </button>
+          </div>
+        </div>
+
+        <div class="results-body">
+          <!-- Panel: Results Grid -->
+          <div id="panelResults" class="data-table-wrap">
+            <div class="empty-state" id="emptyResultsState">
+              <i data-lucide="play" class="empty-state-icon"></i>
+              <p>Ejecuta una query (Ctrl+Enter) para ver los resultados aquí</p>
+            </div>
+            <table class="data-table" id="resultsTable" style="display:none;">
+              <thead id="resultsTableHead"></thead>
+              <tbody id="resultsTableBody"></tbody>
+            </table>
+          </div>
+
+          <!-- Panel: Messages -->
+          <div id="panelMessages" class="messages-box" style="display:none;">
+            <div class="msg-entry msg-info">Listo para ejecutar consultas.</div>
+          </div>
+
+          <!-- Panel: History Dock Log -->
+          <div id="panelHistoryDock" class="data-table-wrap" style="display:none; padding:8px 12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+              <span style="font-weight:600; font-size:12px; color:#d4d4d8;">Registro de Consultas Ejecutadas (SELECT, UPDATE, DELETE, etc.)</span>
+              <button class="btn btn-sm" id="btnRefreshHistoryDock"><i data-lucide="refresh-cw"></i> Actualizar Log</button>
+            </div>
+            <div id="historyDockContainer">
+              <!-- Rendered items -->
+            </div>
+          </div>
+
+          <!-- Panel: Explain -->
+          <div id="panelExplain" class="data-table-wrap" style="display:none;">
+            <table class="data-table" id="explainTable">
+              <thead id="explainTableHead"></thead>
+              <tbody id="explainTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Pagination Controls -->
+        <div class="pagination-bar" id="paginationBar" style="display:none;">
+          <div class="page-info" id="pageInfoText">Mostrando registros</div>
+          <div class="page-controls">
+            <button class="btn btn-sm" id="btnPrevPage" disabled>Anterior</button>
+            <span id="pageCurrentLabel" style="font-weight:600; padding:0 4px;">1</span>
+            <button class="btn btn-sm" id="btnNextPage" disabled>Siguiente</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- MODAL: Gestor de Conexiones -->
+  <div class="modal-overlay" id="modalConnections">
+    <div class="modal-dialog modal-dialog-large">
+      <div class="modal-header">
+        <h3><i data-lucide="server" style="vertical-align:middle; width:16px;"></i> Gestor de Conexiones MySQL</h3>
+        <button class="action-icon" id="btnCloseConnModal"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body">
+        <div class="connections-layout">
+          <!-- Left list of saved connections -->
+          <div class="conn-sidebar">
+            <button class="btn btn-sm btn-primary" id="btnNewConnItem" style="margin-bottom:8px;">
+              <i data-lucide="plus"></i> Nueva Conexión
+            </button>
+            <div id="savedConnList">
+              <!-- Rendered items -->
+            </div>
+          </div>
+
+          <!-- Right form -->
+          <div class="conn-form-wrap">
+            <form id="connectionForm">
+              <input type="hidden" id="connFormId">
+              <div class="form-group">
+                <label>Nombre de Conexión</label>
+                <input type="text" class="form-control" id="connFormName" placeholder="Ej: MySQL Localhost" required>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label>Host / Servidor</label>
+                  <input type="text" class="form-control" id="connFormHost" placeholder="127.0.0.1 o localhost" required>
+                </div>
+                <div class="form-group">
+                  <label>Puerto</label>
+                  <input type="number" class="form-control" id="connFormPort" value="3306" required>
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label>Usuario</label>
+                  <input type="text" class="form-control" id="connFormUser" placeholder="root" required>
+                </div>
+                <div class="form-group">
+                  <label>Contraseña</label>
+                  <input type="password" class="form-control" id="connFormPassword" placeholder="••••••••">
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label>Base de Datos por defecto (Opcional)</label>
+                  <input type="text" class="form-control" id="connFormDatabase" placeholder="Mi_Base_De_Datos">
+                </div>
+                <div class="form-group">
+                  <label>Distintivo de Entorno</label>
+                  <select class="form-control" id="connFormEnvironment" style="cursor:pointer;">
+                    <option value="development">🟢 Desarrollo (Development)</option>
+                    <option value="sandbox">🟡 Sandbox / Pruebas</option>
+                    <option value="production">🔴 Producción (Production)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="form-group" style="display:flex; align-items:center; margin-top:8px;">
+                <label style="cursor:pointer; display:flex; align-items:center; gap:8px; font-size:12px;">
+                  <input type="checkbox" id="connFormSsl"> Usar conexión cifrada SSL
+                </label>
+              </div>
+
+              <div id="connTestResult" style="margin-top:10px; font-size:12px;"></div>
+            </form>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-danger btn-sm" id="btnDeleteConn" style="display:none; margin-right:auto;">
+          <i data-lucide="trash-2"></i> Eliminar
+        </button>
+        <button class="btn" id="btnTestConn">
+          <i data-lucide="activity"></i> Probar Conexión
+        </button>
+        <button class="btn" id="btnSaveConnOnly">
+          <i data-lucide="save"></i> Guardar
+        </button>
+        <button class="btn btn-success" id="btnSaveAndConnect">
+          <i data-lucide="check"></i> Conectar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Ejecutor de Stored Procedures -->
+  <div class="modal-overlay" id="modalProcedureExec">
+    <div class="modal-dialog modal-dialog-large">
+      <div class="modal-header">
+        <h3>
+          <i data-lucide="play-circle" style="vertical-align:middle; width:18px; color:var(--accent);"></i>
+          Ejecutar Procedimiento Almacenado: <span id="modalProcTitle" style="color:var(--accent);"></span>
+        </h3>
+        <button class="action-icon" id="btnCloseProcModal"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">
+          Ingresa los valores para los parámetros del procedimiento y haz clic en Ejecutar:
+        </p>
+        <div id="procParamsContainer">
+          <!-- Dynamically populated fields -->
+        </div>
+
+        <!-- Procedure execution results container -->
+        <div id="procResultsSection" style="display:none; margin-top:20px; border-top:1px solid var(--border-color); padding-top:14px;">
+          <h4 style="font-size:13px; margin-bottom:10px; color:#60a5fa;">Resultados del Procedimiento</h4>
+          <div id="procOutParamsDisplay" style="margin-bottom:12px;"></div>
+          <div id="procResultSetsDisplay"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" id="btnCloseProcModalBtn">Cerrar</button>
+        <button class="btn btn-primary" id="btnExecuteProcAction">
+          <i data-lucide="play"></i> Ejecutar Procedimiento
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Guardar Consulta Actual -->
+  <div class="modal-overlay" id="modalSaveQuery">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3><i data-lucide="bookmark" style="vertical-align:middle; width:16px; color:var(--accent);"></i> Guardar Consulta SQL</h3>
+        <button class="action-icon" id="btnCloseSaveQueryModal"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body">
+        <form id="saveQueryForm">
+          <input type="hidden" id="saveQueryId">
+          <div class="form-group">
+            <label>Título / Nombre de la Consulta</label>
+            <input type="text" class="form-control" id="saveQueryTitle" placeholder="Ej: Reporte ventas del mes o Buscar llantas" required>
+          </div>
+          <div class="form-group">
+            <label>Base de Datos Asociada</label>
+            <input type="text" class="form-control" id="saveQueryDatabase" placeholder="Nombre de la base de datos">
+          </div>
+          <div class="form-group">
+            <label>Sentencia SQL a Guardar</label>
+            <textarea class="form-control" id="saveQueryTextPreview" rows="6" style="font-family:var(--font-mono); font-size:12px; resize:vertical;" required></textarea>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" id="btnCancelSaveQuery">Cancelar</button>
+        <button class="btn btn-primary" id="btnConfirmSaveQuery"><i data-lucide="save"></i> Guardar Consulta</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Consultas Guardadas -->
+  <div class="modal-overlay" id="modalSavedQueries">
+    <div class="modal-dialog modal-dialog-large">
+      <div class="modal-header">
+        <h3><i data-lucide="bookmark" style="vertical-align:middle; width:16px; color:var(--accent);"></i> Consultas SQL Guardadas</h3>
+        <button class="action-icon" id="btnCloseSavedQueriesModal"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body" style="padding:0;">
+        <div style="padding:10px 16px; border-bottom:1px solid var(--border-color); display:flex; justify-content:space-between; align-items:center; background:#1b1b1f;">
+          <input type="text" id="savedQueriesSearchInput" class="search-box" style="max-width:320px;" placeholder="Buscar en consultas guardadas...">
+          <button class="btn btn-sm btn-primary" id="btnSaveCurrentQueryFromList">
+            <i data-lucide="plus"></i> Guardar Consulta Actual
+          </button>
+        </div>
+        <div id="savedQueriesListContainer" style="max-height:480px; overflow-y:auto; padding:12px 16px;">
+          <!-- List of saved queries -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Registro de Consultas (SELECT, UPDATE, DELETE, etc.) -->
+  <div class="modal-overlay" id="modalHistory">
+    <div class="modal-dialog modal-dialog-large">
+      <div class="modal-header">
+        <h3><i data-lucide="history" style="vertical-align:middle; width:16px; color:var(--accent);"></i> Registro de Auditoría (SELECT, UPDATE, DELETE...)</h3>
+        <button class="action-icon" id="btnCloseHistoryModal"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body" style="padding:0;">
+        <!-- Filters bar -->
+        <div style="padding:10px 16px; border-bottom:1px solid var(--border-color); display:flex; gap:10px; flex-wrap:wrap; align-items:center; background:#1b1b1f;">
+          <select id="historyTypeFilter" class="db-selector" style="min-width:130px;">
+            <option value="ALL">Todos los tipos</option>
+            <option value="SELECT">SELECT</option>
+            <option value="UPDATE">UPDATE</option>
+            <option value="DELETE">DELETE</option>
+            <option value="INSERT">INSERT</option>
+            <option value="CREATE">CREATE</option>
+            <option value="ALTER">ALTER</option>
+            <option value="DROP">DROP</option>
+          </select>
+          <select id="historyDbFilter" class="db-selector" style="min-width:150px;">
+            <option value="ALL">Todas las bases</option>
+          </select>
+          <input type="text" id="historySearchInput" class="search-box" style="flex:1; min-width:180px;" placeholder="Buscar en sentencias...">
+          <button class="btn btn-sm btn-danger" id="btnClearHistoryBtn" title="Vaciar registro">
+            <i data-lucide="trash"></i> Limpiar Todo
+          </button>
+        </div>
+        <div id="historyListContainer" style="max-height:480px; overflow-y:auto; padding:12px 16px;">
+          <!-- Items rendered here -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Advertencia de Seguridad (UPDATE / DELETE sin WHERE) -->
+  <div class="modal-overlay" id="modalDangerousQuery" style="z-index: 1100;">
+    <div class="modal-dialog" style="max-width: 580px;">
+      <div class="modal-header danger-warning-header">
+        <h3>
+          <i data-lucide="alert-triangle" style="width:20px; height:20px; color:#ef4444;"></i>
+          Advertencia de Seguridad: Operación Masiva
+        </h3>
+        <button class="action-icon" id="btnCloseDangerousModal"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body" style="padding: 18px 20px;">
+        <div class="danger-warning-box">
+          <div class="danger-warning-title">
+            <i data-lucide="shield-alert" style="width:16px; height:16px; color:#ef4444;"></i>
+            <span>Sentencia sin filtro WHERE detectada</span>
+          </div>
+          <p style="margin: 0; font-size: 12px; color: #d4d4d8; line-height: 1.5;">
+            La consulta a ejecutar modificará o eliminará <strong>TODOS los registros</strong> de la tabla sin ninguna condición en la base de datos <code id="dangerousQueryDb" style="background: rgba(0,0,0,0.5); padding: 2px 6px; border-radius: 4px; color: #38bdf8; font-weight:600;"></code>.
+          </p>
+        </div>
+
+        <div style="margin-bottom: 14px;">
+          <label style="display:block; font-size: 11px; text-transform: uppercase; font-weight: 600; color: var(--text-muted); letter-spacing: 0.5px; margin-bottom: 6px;">
+            Sentencia(s) afectada(s):
+          </label>
+          <div id="dangerousQueryList" style="max-height: 200px; overflow-y: auto; display:flex; flex-direction:column; gap:8px;">
+            <!-- Dynamically populated -->
+          </div>
+        </div>
+
+        <p style="font-size: 12px; color: #a1a1aa; margin: 0; line-height: 1.4;">
+          ⚠️ <strong>Esta acción es destructiva o masiva y no se puede deshacer.</strong> ¿Estás seguro de que deseas proceder con la ejecución?
+        </p>
+      </div>
+      <div class="modal-footer" style="background: #191416; display:flex; justify-content:space-between; align-items:center;">
+        <span style="font-size:11px; color:var(--text-dim);">Presiona Cancelar para detener la ejecución</span>
+        <div style="display:flex; gap:10px;">
+          <button class="btn" id="btnCancelDangerousQuery" style="font-weight:600; border-color:#52525b;">
+            <i data-lucide="x"></i> Cancelar
+          </button>
+          <button class="btn btn-danger" id="btnConfirmDangerousQuery" style="font-weight:600;">
+            <i data-lucide="alert-octagon"></i> Ejecutar de todos modos
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Atajos de Teclado -->
+  <div class="modal-overlay" id="modalShortcuts">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3><i data-lucide="keyboard" style="vertical-align:middle; width:16px;"></i> Atajos de Teclado</h3>
+        <button class="action-icon" id="btnCloseShortcutsModal"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body">
+        <table class="data-table" style="width:100%;">
+          <thead>
+            <tr><th>Atajo</th><th>Acción</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>Ctrl + Enter</code> / <code>Cmd + Enter</code></td><td>Ejecutar la consulta seleccionada o activa</td></tr>
+            <tr><td><code>F5</code></td><td>Ejecutar todo el contenido del editor</td></tr>
+            <tr><td><code>Ctrl + S</code></td><td>Guardar la consulta SQL actual</td></tr>
+            <tr><td><code>Ctrl + Space</code></td><td>Abrir autocompletado inteligente (Tablas, Columnas, SQL)</td></tr>
+            <tr><td><code>Ctrl + F</code></td><td>Buscar en el editor SQL</td></tr>
+            <tr><td><code>Ctrl + H</code></td><td>Reemplazar en el editor SQL</td></tr>
+            <tr><td><code>Shift + Alt + F</code></td><td>Formatear consulta SQL</td></tr>
+            <tr><td><code>Ctrl + T</code></td><td>Abrir nueva pestaña de Query</td></tr>
+            <tr><td><code>Alt + R</code></td><td>Recargar explorador de tablas y esquemas</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Application Scripts -->
+  <script src="/static/js/monaco-setup.js?v=20261106_10"></script>
+  <script src="/static/js/schema-tree.js?v=20261106_10"></script>
+  <script src="/static/js/proc-modal.js?v=20261106_10"></script>
+  <script src="/static/js/query-exec.js?v=20261106_10"></script>
+  <script src="/static/js/app.js?v=20261106_10"></script>
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+</html>
