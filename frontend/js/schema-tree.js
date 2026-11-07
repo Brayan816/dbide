@@ -103,18 +103,17 @@ class SchemaTree {
     html += this.renderGroup(
       'procedures',
       'Procedimientos',
-      'play-circle',
+      'file-code',
       fProcedures.length,
       procedures.length,
       fProcedures.map(p => `
         <div class="tree-item" data-type="procedure" data-name="${p.name}">
           <div class="tree-item-name" title="${p.name}">
-            <i data-lucide="play-circle" style="width:13px; height:13px; color:#34d399;"></i>
+            <i data-lucide="file-code" style="width:13px; height:13px; color:#34d399;"></i>
             <span>${p.name}</span>
           </div>
           <div class="tree-item-actions">
-            <button class="action-icon act-run-proc" title="Ejecutar"><i data-lucide="play" style="width:12px; height:12px;"></i></button>
-            <button class="action-icon act-ddl" title="Ver DDL"><i data-lucide="code" style="width:12px; height:12px;"></i></button>
+            <button class="action-icon act-edit-proc" title="Editar Procedimiento"><i data-lucide="edit-3" style="width:12px; height:12px;"></i></button>
           </div>
         </div>
       `).join('')
@@ -244,7 +243,7 @@ class SchemaTree {
         if (type === 'table' || type === 'view') {
           if (this.onSelectObject) this.onSelectObject('view_data', { type, name });
         } else if (type === 'procedure') {
-          if (this.onSelectObject) this.onSelectObject('run_procedure', { name });
+          if (this.onSelectObject) this.onSelectObject('edit_procedure', { name });
         } else {
           if (this.onSelectObject) this.onSelectObject('view_ddl', { type, name });
         }
@@ -275,11 +274,11 @@ class SchemaTree {
         });
       }
 
-      const actRunProc = item.querySelector('.act-run-proc');
-      if (actRunProc) {
-        actRunProc.addEventListener('click', (e) => {
+      const actEditProc = item.querySelector('.act-edit-proc');
+      if (actEditProc) {
+        actEditProc.addEventListener('click', (e) => {
           e.stopPropagation();
-          if (this.onSelectObject) this.onSelectObject('run_procedure', { name });
+          if (this.onSelectObject) this.onSelectObject('edit_procedure', { name });
         });
       }
 

@@ -916,7 +916,7 @@ class App {
 
   // --- Schema Actions Handler ---
   handleSchemaAction(action, payload) {
-    if (['view_data', 'view_ddl', 'generate_select', 'generate_call_func', 'run_procedure'].includes(action)) {
+    if (['view_data', 'view_ddl', 'edit_procedure', 'generate_select', 'generate_call_func', 'run_procedure'].includes(action)) {
       this.onAutoCollapseTrigger();
     }
 
@@ -926,6 +926,8 @@ class App {
       this.createDataTab(payload.name);
     } else if (action === 'view_ddl') {
       this.createDdlTab(payload.type, payload.name);
+    } else if (action === 'edit_procedure') {
+      this.openProcedureEditor(payload.name);
     } else if (action === 'generate_select') {
       const sql = `SELECT * FROM ${payload.name} LIMIT 100;\n`;
       const activeTab = this.tabs.find(t => t.id === this.activeTabId && t.type === 'query');
@@ -944,6 +946,44 @@ class App {
       }
     } else if (action === 'run_procedure') {
       this.procModal.open(this.currentDatabase, payload.name);
+    }
+  }
+
+  async openProcedureEditor(name) {
+    const existing = this.tabs.find(t => 
+      t.targetProcedure === name || t.title === `Editar: ${name}` || t.title === `Editar ${name}`
+    );
+    if (existing) {
+      this.activateTab(existing.id);
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/schema/databases/${encodeURIComponent(this.currentDatabase)}/objects/PROCEDURE/${encodeURIComponent(name)}/ddl`);
+      const data = await res.json();
+      const rawDdl = (data && data.ddl) ? data.ddl.trim() : '';
+
+      let initialSql = '';
+      if (rawDdl) {
+        initialSql = `DROP PROCEDURE IF EXISTS \`${name}\`;\n\n${rawDdl};\n`;
+      } else {
+        initialSql = `-- Procedimiento: ${name}\n-- No se encontró la definición DDL\n`;
+      }
+
+      const tabObj = this.createQueryTab(initialSql, `Editar: ${name}`);
+      if (tabObj) {
+        tabObj.targetProcedure = name;
+        const icon = tabObj.tabElement.querySelector('i');
+        if (icon) {
+          icon.setAttribute('data-lucide', 'file-code');
+          icon.style.color = '#34d399';
+          if (window.lucide) lucide.createIcons();
+        }
+      }
+    } catch (err) {
+      console.error('Error al abrir editor de procedimiento:', err);
+      const tabObj = this.createQueryTab(`-- Error al cargar procedimiento ${name}: ${err.message}`, `Editar: ${name}`);
+      if (tabObj) tabObj.targetProcedure = name;
     }
   }
 
