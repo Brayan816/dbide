@@ -32,6 +32,7 @@ class QueryExecutor {
     this.initLimitSelect();
     this.setupVirtualScrollListener();
     this.bindExports();
+    this.bindTableCopyEvents();
     this.bindClearMessages();
   }
 
@@ -72,6 +73,107 @@ class QueryExecutor {
       }
       this.resetMessageBadge();
     });
+  }
+
+  bindTableCopyEvents() {
+    if (!this.resultsBody) return;
+
+    this.resultsBody.addEventListener('dblclick', async (e) => {
+      const td = e.target.closest('td');
+      if (!td) return;
+      const tr = td.closest('tr');
+      if (!tr || tr.classList.contains('virtual-spacer-row')) return;
+
+      const rowIndex = parseInt(tr.dataset.rowIndex, 10);
+      if (isNaN(rowIndex)) return;
+      const rowData = this.currentRows[rowIndex];
+      if (!rowData) return;
+
+      if (td.classList.contains('row-num-cell') || td.cellIndex === 0) {
+        // DOUBLE CLICK ON ROW NUMBER: Copy entire row!
+        await this.copyRowToClipboard(rowIndex, rowData, tr);
+      } else {
+        // DOUBLE CLICK ON DATA CELL: Copy this field's value!
+        const colIdx = parseInt(td.dataset.colIdx, 10);
+        const val = (colIdx >= 0 && colIdx < rowData.length) ? rowData[colIdx] : td.textContent.trim();
+        await this.copyCellToClipboard(val, td);
+      }
+    });
+  }
+
+  async copyRowToClipboard(rowIndex, rowData, tr) {
+    const tsvText = rowData.map(v => v === null ? 'NULL' : String(v)).join('\t');
+    try {
+      await this.writeClipboardText(tsvText);
+
+      // Visual flash animation on the whole row
+      tr.classList.remove('row-copied-flash');
+      void tr.offsetWidth;
+      tr.classList.add('row-copied-flash');
+      setTimeout(() => tr.classList.remove('row-copied-flash'), 650);
+
+      this.showCopyToast(`📋 Fila #${rowIndex + 1} copiada al portapapeles (${rowData.length} columnas)`);
+      this.logMessage(`Fila #${rowIndex + 1} copiada al portapapeles (${rowData.length} columnas).`, 'info');
+    } catch (err) {
+      console.error('Error al copiar fila:', err);
+    }
+  }
+
+  async copyCellToClipboard(val, td) {
+    const text = val === null ? 'NULL' : String(val);
+    try {
+      await this.writeClipboardText(text);
+
+      // Visual flash animation on the clicked cell
+      td.classList.remove('cell-copied-flash');
+      void td.offsetWidth;
+      td.classList.add('cell-copied-flash');
+      setTimeout(() => td.classList.remove('cell-copied-flash'), 550);
+
+      const preview = text.length > 40 ? text.substring(0, 37) + '...' : text;
+      this.showCopyToast(`📋 Copiado al portapapeles: "${preview}"`);
+    } catch (err) {
+      console.error('Error al copiar celda:', err);
+    }
+  }
+
+  async writeClipboardText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return;
+      } catch (_) {}
+    }
+    // Fallback for non-secure contexts or permission restrictions
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    ta.style.top = '-9999px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  }
+
+  showCopyToast(message) {
+    let toast = document.getElementById('appCopyToast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'appCopyToast';
+      toast.className = 'copy-toast';
+      document.body.appendChild(toast);
+    }
+    toast.innerHTML = `<i data-lucide="clipboard-check" style="width:14px; height:14px; color:#38bdf8;"></i> <span>${this.escapeHtml(message)}</span>`;
+    if (window.lucide) lucide.createIcons();
+    toast.classList.add('show');
+
+    if (this.toastTimeout) clearTimeout(this.toastTimeout);
+    this.toastTimeout = setTimeout(() => {
+      toast.classList.remove('show');
+    }, 2200);
   }
 
   resetMessageBadge() {
@@ -634,15 +736,15 @@ class QueryExecutor {
     // Rendered window slice
     for (let i = startIdx; i < endIdx; i++) {
       const row = this.currentRows[i];
-      html += `<tr><td style="text-align:center; color:var(--text-dim); font-size:11px; user-select:none;">${i + 1}</td>`;
+      html += `<tr data-row-index="${i}"><td class="row-num-cell" title="Doble clic para copiar toda la fila #${i + 1}">${i + 1}</td>`;
       for (let c = 0; c < row.length; c++) {
         const val = row[c];
         if (val === null) {
-          html += '<td><span class="null-badge">NULL</span></td>';
+          html += `<td class="data-cell" data-col-idx="${c}" title="Doble clic para copiar valor (NULL)"><span class="null-badge">NULL</span></td>`;
         } else {
           const strVal = String(val);
           const escaped = this.escapeHtml(strVal);
-          html += `<td title="${escaped}">${escaped}</td>`;
+          html += `<td class="data-cell" data-col-idx="${c}" title="Doble clic para copiar: ${escaped}">${escaped}</td>`;
         }
       }
       html += '</tr>';
