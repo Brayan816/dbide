@@ -623,14 +623,27 @@ class App {
       (sql) => { this.openSaveQueryModal(tabObj, sql); }
     ).then(editor => {
       tabObj.editorInstance = editor;
+      if (tabObj.isRoutineTab) {
+        editor.isRoutineEditor = true;
+      }
     });
 
     // Toolbar buttons
     pane.querySelector('.btn-run-query').addEventListener('click', () => {
       if (tabObj.editorInstance) {
-        const sql = (typeof tabObj.editorInstance.getQueryToRun === 'function')
-          ? tabObj.editorInstance.getQueryToRun()
-          : (tabObj.editorInstance.getSelectedText() || tabObj.editorInstance.getValue());
+        let sql = '';
+        const selText = (typeof tabObj.editorInstance.getSelectedText === 'function')
+          ? tabObj.editorInstance.getSelectedText()
+          : '';
+        if (selText) {
+          sql = selText;
+        } else if (tabObj.isRoutineTab || tabObj.targetProcedure) {
+          sql = tabObj.editorInstance.getValue();
+        } else if (typeof tabObj.editorInstance.getQueryToRun === 'function') {
+          sql = tabObj.editorInstance.getQueryToRun();
+        } else {
+          sql = tabObj.editorInstance.getValue();
+        }
         this.onAutoCollapseTrigger();
         this.queryExec.run(sql, this.currentDatabase);
       }
@@ -973,6 +986,10 @@ class App {
       const tabObj = this.createQueryTab(initialSql, `Editar: ${name}`);
       if (tabObj) {
         tabObj.targetProcedure = name;
+        tabObj.isRoutineTab = true;
+        if (tabObj.editorInstance) {
+          tabObj.editorInstance.isRoutineEditor = true;
+        }
         const icon = tabObj.tabElement.querySelector('i');
         if (icon) {
           icon.setAttribute('data-lucide', 'file-code');

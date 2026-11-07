@@ -567,6 +567,33 @@ function getCurrentStatement(modelOrText, positionOrOffset) {
     }
   }
 
+  // Second pass: Mask semicolons inside compound blocks (BEGIN...END, CASE...END)
+  let blockDepth = 0;
+  let wordBuffer = '';
+
+  for (let i = 0; i < fullText.length; i++) {
+    const ch = maskedChars[i];
+    const isWordChar = /[a-zA-Z_]/.test(ch);
+
+    if (isWordChar) {
+      wordBuffer += ch;
+    } else {
+      if (wordBuffer) {
+        const upperWord = wordBuffer.toUpperCase();
+        if (upperWord === 'BEGIN' || upperWord === 'CASE') {
+          blockDepth++;
+        } else if (upperWord === 'END') {
+          blockDepth = Math.max(0, blockDepth - 1);
+        }
+        wordBuffer = '';
+      }
+
+      if (ch === ';' && blockDepth > 0) {
+        maskedChars[i] = ' ';
+      }
+    }
+  }
+
   const maskedText = maskedChars.join('');
 
   // Find previous semicolon before cursor
@@ -589,6 +616,13 @@ function getCurrentStatement(modelOrText, positionOrOffset) {
 
   const stmt = fullText.slice(startOffset, endOffset).trim();
   return stmt || fullText;
+}
+
+// Helper: Detect if a script is a routine definition (procedure, function, trigger)
+function isRoutineScript(text) {
+  if (!text) return false;
+  return /\bCREATE\s+(?:DEFINER\s*=\s*[^\s]+\s+)?(?:PROCEDURE|FUNCTION|TRIGGER)\b/i.test(text) ||
+         /\bDROP\s+(?:PROCEDURE|FUNCTION|TRIGGER)\s+IF\s+EXISTS\b/i.test(text);
 }
 
 // Extract all tables and aliases mentioned in a query statement or text
@@ -1809,8 +1843,9 @@ async function createEditor(domElement, initialValue = '', onRunCallback = null,
 
     // Function to accurately resolve query to run:
     // 1. Explicitly selected text if non-empty
-    // 2. Or the statement under the cursor (delimited by semicolons outside comments & strings)
-    // 3. Or the entire document
+    // 2. Full script if routine editor or contains procedure/function/trigger definitions
+    // 3. Or the statement under the cursor (delimited by semicolons outside comments, strings & blocks)
+    // 4. Or the entire document
     function resolveQueryToExecute() {
       const selection = editor.getSelection();
       if (selection && !selection.isEmpty()) {
@@ -1818,6 +1853,13 @@ async function createEditor(domElement, initialValue = '', onRunCallback = null,
         if (selectedText && selectedText.trim().length > 0) {
           return selectedText.trim();
         }
+      }
+
+      const fullVal = (editor.getValue() || '').trim();
+
+      // If routine editing or routine definition script, execute whole buffer (e.g. DROP + CREATE)
+      if (editor.isRoutineEditor || isRoutineScript(fullVal)) {
+        return fullVal;
       }
 
       const position = editor.getPosition();
@@ -1828,7 +1870,7 @@ async function createEditor(domElement, initialValue = '', onRunCallback = null,
         }
       }
 
-      return (editor.getValue() || '').trim();
+      return fullVal;
     }
 
     // Add Ctrl+Enter or Cmd+Enter command
@@ -1916,10 +1958,12 @@ async function createEditor(domElement, initialValue = '', onRunCallback = null,
         const selText = textarea.value.substring(start, end).trim();
         if (selText) return selText;
       }
+      const fullVal = (textarea.value || '').trim();
+      if (isRoutineScript(fullVal)) return fullVal;
       const cursorOffset = textarea.selectionStart || 0;
       const currentStmt = getCurrentStatement(textarea.value, cursorOffset);
       if (currentStmt && currentStmt.trim()) return currentStmt.trim();
-      return (textarea.value || '').trim();
+      return fullVal;
     }
 
     textarea.addEventListener('keydown', (e) => {
