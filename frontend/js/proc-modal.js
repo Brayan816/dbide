@@ -143,6 +143,27 @@ class ProcedureModal {
 
     // 2. Result sets display
     if (result.result_sets && result.result_sets.length > 0) {
+      // Sync with main IDE Results panel
+      const selectResults = result.result_sets.map((rs, idx) => ({
+        statement_index: idx + 1,
+        type: 'SELECT',
+        columns: rs.columns,
+        column_types: rs.column_types || [],
+        rows: rs.rows,
+        row_count: rs.row_count,
+        total_count: rs.row_count,
+        is_limited: false,
+        limit: null,
+        message: `${rs.row_count} fila${rs.row_count === 1 ? '' : 's'}`
+      }));
+
+      if (window.app && window.app.queryExec) {
+        window.app.queryExec.activeSelectResults = selectResults;
+        window.app.queryExec.currentSelectIdx = 0;
+        window.app.queryExec.renderResultsTabs(selectResults, result.duration_ms);
+        window.app.queryExec.selectResultTab(0, result.duration_ms);
+      }
+
       let setsHtml = '';
       result.result_sets.forEach((set, idx) => {
         setsHtml += `
@@ -151,7 +172,7 @@ class ProcedureModal {
             <div style="max-height:220px; overflow:auto; border:1px solid var(--border-color); border-radius:6px;">
               <table class="data-table" style="width:100%;">
                 <thead>
-                  <tr>${set.columns.map(c => `<th>${c}</th>`).join('')}</tr>
+                  <tr>${set.columns.map((c, i) => `<th>${c} ${set.column_types && set.column_types[i] ? `<span class="col-type-badge">${set.column_types[i]}</span>` : ''}</th>`).join('')}</tr>
                 </thead>
                 <tbody>
                   ${set.rows.map(r => `

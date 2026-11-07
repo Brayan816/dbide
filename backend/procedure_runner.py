@@ -2,6 +2,7 @@ from typing import List, Dict, Any
 import time
 import pymysql.cursors
 from .db_manager import manager, serialize_value
+from .query_runner import MYSQL_TYPE_MAP
 
 def get_procedure_params(database: str, procedure_name: str) -> List[Dict[str, Any]]:
     session = manager.get_active()
@@ -85,11 +86,13 @@ def execute_procedure(database: str, procedure_name: str, param_values: Dict[str
         while has_more:
             if cursor.description:
                 cols = [d[0] for d in cursor.description]
+                col_types = [MYSQL_TYPE_MAP.get(d[1], "VARCHAR") for d in cursor.description]
                 rows = cursor.fetchall()
                 serialized_rows = [[serialize_value(c) for c in r] for r in rows]
                 result_sets.append({
                     "name": f"Resultado {set_index}",
                     "columns": cols,
+                    "column_types": col_types,
                     "rows": serialized_rows,
                     "row_count": len(rows)
                 })

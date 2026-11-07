@@ -615,14 +615,97 @@ class App {
     };
     this.tabs.push(tabObj);
 
+    // Execution logic for tab (supports normal queries and stored procedure compilation + execution)
+    const executeTabAction = async (explicitSql) => {
+      if (!tabObj.editorInstance) return;
+
+      const selText = (typeof tabObj.editorInstance.getSelectedText === 'function')
+        ? tabObj.editorInstance.getSelectedText()
+        : '';
+
+      if (selText) {
+        this.onAutoCollapseTrigger();
+        this.queryExec.run(selText, this.currentDatabase);
+        return;
+      }
+
+      if (tabObj.isRoutineTab || tabObj.targetProcedure) {
+        const fullDdl = tabObj.editorInstance.getValue();
+        let procName = tabObj.targetProcedure;
+        if (!procName) {
+          const m = fullDdl.match(/\bCREATE\s+(?:DEFINER\s*=\s*[^\s]+\s+)?PROCEDURE\s+`?([a-zA-Z0-9_]+)`?/i);
+          if (m) procName = m[1];
+        }
+
+        this.onAutoCollapseTrigger();
+        this.queryExec.logMessage(`Compilando y guardando procedimiento '${procName || ''}'...`, 'info');
+        this.queryExec.setLoading(true);
+
+        try {
+          // 1. Compile DDL
+          const compRes = await fetch('/api/query/execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sql: fullDdl, database: this.currentDatabase })
+          });
+          const compData = await compRes.json();
+          if (!compRes.ok || !compData.success) {
+            this.queryExec.setLoading(false);
+            const err = compData.error || compData.detail || 'Error al compilar el procedimiento';
+            this.queryExec.logMessage(`❌ Error de compilación en procedimiento: ${err}`, 'error');
+            this.queryExec.switchTab('panelMessages');
+            return;
+          }
+          this.queryExec.logMessage(`✓ Procedimiento '${procName}' guardado y compilado con éxito.`, 'success');
+
+          if (!procName) {
+            this.queryExec.setLoading(false);
+            this.queryExec.switchTab('panelMessages');
+            return;
+          }
+
+          // 2. Check parameters
+          const paramRes = await fetch(`/api/procedures/${encodeURIComponent(this.currentDatabase)}/${encodeURIComponent(procName)}/params`);
+          const paramData = paramRes.ok ? await paramRes.json() : null;
+          const params = (paramData && paramData.parameters) ? paramData.parameters : [];
+          const inputParams = params.filter(p => !p.mode || p.mode.toUpperCase() === 'IN' || p.mode.toUpperCase() === 'INOUT');
+
+          if (inputParams.length > 0) {
+            this.queryExec.setLoading(false);
+            this.procModal.open(this.currentDatabase, procName);
+          } else {
+            // No input parameters: execute CALL proc() directly to return all result sets!
+            this.queryExec.setLoading(false);
+            const callSql = `CALL \`${this.currentDatabase}\`.\`${procName}\`();`;
+            this.queryExec.run(callSql, this.currentDatabase);
+          }
+        } catch (err) {
+          this.queryExec.setLoading(false);
+          this.queryExec.logMessage(`Error al ejecutar procedimiento: ${err.message}`, 'error');
+          this.queryExec.switchTab('panelMessages');
+        }
+        return;
+      }
+
+      let sql = explicitSql || '';
+      if (!sql) {
+        if (typeof tabObj.editorInstance.getQueryToRun === 'function') {
+          sql = tabObj.editorInstance.getQueryToRun();
+        } else {
+          sql = tabObj.editorInstance.getValue();
+        }
+      }
+      this.onAutoCollapseTrigger();
+      this.queryExec.run(sql, this.currentDatabase);
+    };
+
     // Initialize Monaco in container
     const monacoBox = pane.querySelector(`#monaco_${tabId}`);
     createEditor(
       monacoBox,
       initialSql || '-- Escribe tu consulta SQL aquí\nSELECT 1;\n',
       (sql) => {
-        this.onAutoCollapseTrigger();
-        this.queryExec.run(sql, this.currentDatabase);
+        executeTabAction(sql);
       },
       (sql) => { this.openSaveQueryModal(tabObj, sql); }
     ).then(editor => {
@@ -634,23 +717,7 @@ class App {
 
     // Toolbar buttons
     pane.querySelector('.btn-run-query').addEventListener('click', () => {
-      if (tabObj.editorInstance) {
-        let sql = '';
-        const selText = (typeof tabObj.editorInstance.getSelectedText === 'function')
-          ? tabObj.editorInstance.getSelectedText()
-          : '';
-        if (selText) {
-          sql = selText;
-        } else if (tabObj.isRoutineTab || tabObj.targetProcedure) {
-          sql = tabObj.editorInstance.getValue();
-        } else if (typeof tabObj.editorInstance.getQueryToRun === 'function') {
-          sql = tabObj.editorInstance.getQueryToRun();
-        } else {
-          sql = tabObj.editorInstance.getValue();
-        }
-        this.onAutoCollapseTrigger();
-        this.queryExec.run(sql, this.currentDatabase);
-      }
+      executeTabAction();
     });
 
     pane.querySelector('.btn-debug-proc')?.addEventListener('click', () => {

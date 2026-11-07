@@ -8,6 +8,7 @@ from typing import Dict, Any, List, Optional, Tuple, Set
 import pymysql
 from .db_manager import DatabaseSession, manager, serialize_value
 from .procedure_runner import get_procedure_params
+from .query_runner import MYSQL_TYPE_MAP
 
 class ProcedureDebugger:
     """
@@ -334,10 +335,12 @@ class DebugSession:
                 while has_more:
                     if cur.description:
                         cols = [d[0] for d in cur.description]
+                        col_types = [MYSQL_TYPE_MAP.get(d[1], "VARCHAR") for d in cur.description]
                         rows = cur.fetchall()
                         self.output_result_sets.append({
                             "name": f"Resultado {set_idx}",
                             "columns": cols,
+                            "column_types": col_types,
                             "rows": [[serialize_value(c) for c in r] for r in rows],
                             "row_count": len(rows)
                         })
@@ -529,3 +532,4 @@ class DebugManager:
             self._sessions.clear()
 
 debug_manager = DebugManager()
+

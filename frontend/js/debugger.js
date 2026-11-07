@@ -323,6 +323,22 @@ class StoredProcedureDebugger {
     this.currentProcedure = procedureName;
 
     try {
+      // Auto-compile current editor content if open so MySQL has latest changes
+      if (tabObj && tabObj.editorInstance) {
+        const fullDdl = tabObj.editorInstance.getValue();
+        if (fullDdl && fullDdl.trim()) {
+          try {
+            await fetch('/api/query/execute', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ sql: fullDdl, database })
+            });
+          } catch (e) {
+            console.warn('Could not auto-compile procedure before debug:', e);
+          }
+        }
+      }
+
       // Check parameters required
       const res = await fetch(`/api/procedures/${encodeURIComponent(database)}/${encodeURIComponent(procedureName)}/params`);
       const data = await res.json();
@@ -504,15 +520,31 @@ class StoredProcedureDebugger {
 
       // Show result sets if returned
       if (session.result_sets && session.result_sets.length > 0) {
-        const rs = session.result_sets[0];
-        this.logMessage(`Conjunto de resultados devuelto: ${rs.row_count} filas.`, 'info');
+        const selectResults = session.result_sets.map((rs, idx) => ({
+          statement_index: idx + 1,
+          type: 'SELECT',
+          columns: rs.columns,
+          column_types: rs.column_types || [],
+          rows: rs.rows,
+          row_count: rs.row_count,
+          total_count: rs.row_count,
+          is_limited: false,
+          limit: null,
+          message: `${rs.row_count} fila${rs.row_count === 1 ? '' : 's'}`
+        }));
+
+        this.logMessage(`✓ Se obtuvieron ${session.result_sets.length} conjunto(s) de resultados en la depuración.`, 'success');
+
+        if (window.app && window.app.queryExec) {
+          window.app.queryExec.activeSelectResults = selectResults;
+          window.app.queryExec.currentSelectIdx = 0;
+          window.app.queryExec.renderResultsTabs(selectResults, session.duration_ms);
+          window.app.queryExec.selectResultTab(0, session.duration_ms);
+          window.app.queryExec.switchTab('panelResults');
+        }
       }
 
-      setTimeout(() => {
-        if (confirm(`Depuración de '${session.procedure_name}' finalizada con éxito (${session.duration_ms} ms). ¿Deseas cerrar el panel de depuración?`)) {
-          this.stopDebugging();
-        }
-      }, 500);
+      this.logMessage(`Depuración finalizada (${session.duration_ms} ms). Los resultados se muestran en el panel inferior. Pulsa Detener (Shift+F5) cuando desees salir.`, 'info');
 
     } else if (status === 'ERROR') {
       this.updateStatusPill('ERROR', `Error en ejecución`);
@@ -642,3 +674,4 @@ class StoredProcedureDebugger {
       .replace(/'/g, '&#039;');
   }
 }
+
