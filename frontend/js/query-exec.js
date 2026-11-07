@@ -10,15 +10,57 @@ class QueryExecutor {
     this.messagesView = document.getElementById('sidebarMessagesView');
     this.msgBadge = document.getElementById('sidebarMsgBadge');
     this.statsBadge = document.getElementById('resultStatsBadge');
+    this.resultsNav = document.getElementById('resultsNavTabs');
+    this.panelResults = document.getElementById('panelResults');
+    this.limitSelect = document.getElementById('queryLimitSelect');
 
     this.currentColumns = [];
     this.currentRows = [];
+    this.activeSelectResults = [];
+    this.currentSelectIdx = 0;
     this.sortCol = null;
     this.sortAsc = true;
     this.unreadMessages = 0;
 
+    // Virtual scrolling configuration
+    this.ROW_HEIGHT = 29;
+    this.OVERSCAN = 15;
+    this.isScrollTicking = false;
+
+    this.initLimitSelect();
+    this.setupVirtualScrollListener();
     this.bindExports();
     this.bindClearMessages();
+  }
+
+  initLimitSelect() {
+    if (!this.limitSelect) return;
+    const savedLimit = localStorage.getItem('dbide_query_row_limit') || '100';
+    if ([...this.limitSelect.options].some(o => o.value === savedLimit)) {
+      this.limitSelect.value = savedLimit;
+    }
+    this.limitSelect.addEventListener('change', () => {
+      localStorage.setItem('dbide_query_row_limit', this.limitSelect.value);
+    });
+  }
+
+  setupVirtualScrollListener() {
+    if (!this.panelResults) return;
+    this.panelResults.addEventListener('scroll', () => {
+      if (!this.isScrollTicking) {
+        window.requestAnimationFrame(() => {
+          this.renderVirtualSlice();
+          this.isScrollTicking = false;
+        });
+        this.isScrollTicking = true;
+      }
+    }, { passive: true });
+
+    window.addEventListener('resize', () => {
+      if (this.currentRows && this.currentRows.length > 0) {
+        this.renderVirtualSlice();
+      }
+    });
   }
 
   bindClearMessages() {
@@ -245,12 +287,13 @@ class QueryExecutor {
 
     this.setLoading(true);
     const start = performance.now();
+    const rowLimit = this.limitSelect ? parseInt(this.limitSelect.value, 10) : 100;
 
     try {
       const res = await fetch('/api/query/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sql, database })
+        body: JSON.stringify({ sql, database, limit: rowLimit })
       });
 
       const data = await res.json();
@@ -266,7 +309,7 @@ class QueryExecutor {
 
       const results = data.results || [];
       if (results.length === 0) {
-        this.clearResultNavPills();
+        this.renderResultsTabs([], data.duration_ms);
         this.logMessage(`Consulta ejecutada correctamente (${data.duration_ms} ms). Sin filas afectadas.`, 'success');
         this.switchTab('panelMessages');
         this.statsBadge.textContent = `⚡ ${data.duration_ms} ms`;
@@ -276,20 +319,21 @@ class QueryExecutor {
       // Check primary result set
       const selectResults = results.filter(r => r.type === 'SELECT' && r.columns && r.columns.length > 0);
       if (selectResults.length > 0) {
-        if (selectResults.length === 1) {
-          const firstSelect = selectResults[0];
-          this.clearResultNavPills();
-          this.renderTable(firstSelect.columns, firstSelect.rows);
-          this.switchTab('panelResults');
-          this.statsBadge.textContent = `⚡ ${data.duration_ms} ms | ${firstSelect.rows.length} fila${firstSelect.rows.length === 1 ? '' : 's'}`;
-          this.logMessage(`Consulta completada (${data.duration_ms} ms): ${firstSelect.rows.length} filas devueltas.`, 'success');
-        } else {
-          // Multiple SELECT queries returned
-          this.renderMultiSelectResults(selectResults, data.duration_ms);
-        }
+        this.activeSelectResults = selectResults;
+        this.currentSelectIdx = 0;
+        this.renderResultsTabs(selectResults, data.duration_ms);
+        this.selectResultTab(0, data.duration_ms);
+        this.switchTab('panelResults');
+
+        selectResults.forEach((sr, idx) => {
+          const info = sr.is_limited
+            ? `${sr.rows.length} de ${sr.total_count} filas (limitado a ${sr.limit})`
+            : `${sr.rows.length} filas`;
+          this.logMessage(`Consulta ${idx + 1} completada (${data.duration_ms} ms): ${info} devueltas.`, 'success');
+        });
       } else {
         // Mutation or DDL
-        this.clearResultNavPills();
+        this.renderResultsTabs([], data.duration_ms);
         const totalAffected = results.reduce((acc, r) => acc + (r.row_count || 0), 0);
         this.logMessage(`Comandos ejecutados (${data.duration_ms} ms). Total filas afectadas: ${totalAffected}.`, 'success');
         this.switchTab('panelMessages');
@@ -319,7 +363,9 @@ class QueryExecutor {
         throw new Error(data.detail || data.error || 'Error al ejecutar EXPLAIN');
       }
 
+      this.renderSingleCustomTab('Plan EXPLAIN', data.rows.length);
       this.renderTable(data.columns, data.rows);
+      this.switchTab('panelResults');
       this.statsBadge.textContent = `⚡ EXPLAIN (${data.duration_ms} ms) | ${data.rows.length} fila${data.rows.length === 1 ? '' : 's'}`;
       this.logMessage(`Plan EXPLAIN completado (${data.duration_ms} ms): ${data.rows.length} filas analizadas.`, 'info');
     } catch (err) {
@@ -331,66 +377,106 @@ class QueryExecutor {
     }
   }
 
-  renderMultiSelectResults(selectResults, durationMs) {
-    this.switchTab('panelResults');
-    const nav = document.querySelector('.results-header .results-nav');
-    if (!nav) {
-      this.renderTable(selectResults[0].columns, selectResults[0].rows);
+  renderResultsTabs(selectResults, durationMs) {
+    this.activeSelectResults = selectResults || [];
+    this.resultsNav = document.getElementById('resultsNavTabs') || document.querySelector('.results-header .results-nav');
+    if (!this.resultsNav) return;
+
+    if (!selectResults || selectResults.length === 0) {
+      this.resultsNav.innerHTML = `
+        <button class="results-tab-btn active" data-idx="0">
+          <i data-lucide="table-2" style="width:13px; height:13px;"></i>
+          <span>Resultados</span>
+        </button>
+      `;
+      if (window.lucide) lucide.createIcons();
       return;
     }
 
-    let pillsContainer = document.getElementById('resultsNavPills');
-    if (!pillsContainer) {
-      pillsContainer = document.createElement('div');
-      pillsContainer.id = 'resultsNavPills';
-      pillsContainer.style.display = 'flex';
-      pillsContainer.style.gap = '4px';
-      pillsContainer.style.marginLeft = '8px';
-      nav.appendChild(pillsContainer);
+    if (selectResults.length === 1) {
+      const sr = selectResults[0];
+      const countLabel = sr.is_limited ? `${sr.rows.length}/${sr.total_count}` : `${sr.rows.length}`;
+      this.resultsNav.innerHTML = `
+        <button class="results-tab-btn active" data-idx="0" title="${sr.message || ''}">
+          <i data-lucide="table-2" style="width:13px; height:13px;"></i>
+          <span>Resultado 1</span>
+          <span class="results-tab-pill">${countLabel}</span>
+        </button>
+      `;
+    } else {
+      // Multiple queries (e.g. SELECT * FROM pedidos; SELECT * FROM clientes;)
+      this.resultsNav.innerHTML = selectResults.map((sr, idx) => {
+        const countLabel = sr.is_limited ? `${sr.rows.length}/${sr.total_count}` : `${sr.rows.length}`;
+        const activeCls = idx === this.currentSelectIdx ? 'active' : '';
+        return `
+          <button class="results-tab-btn ${activeCls}" data-idx="${idx}" title="Consulta ${idx + 1}: ${sr.message || ''}">
+            <i data-lucide="table-2" style="width:13px; height:13px;"></i>
+            <span>Resultado ${idx + 1}</span>
+            <span class="results-tab-pill">${countLabel}</span>
+          </button>
+        `;
+      }).join('');
     }
 
-    pillsContainer.innerHTML = selectResults.map((sr, idx) => `
-      <button class="btn btn-sm btn-res-tab ${idx === 0 ? 'btn-primary' : ''}" data-idx="${idx}" style="font-size:11px; padding:2px 8px;">
-        Resultado ${idx + 1} (${sr.rows.length})
-      </button>
-    `).join('');
+    if (window.lucide) lucide.createIcons();
 
-    pillsContainer.querySelectorAll('.btn-res-tab').forEach(btn => {
+    this.resultsNav.querySelectorAll('.results-tab-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        pillsContainer.querySelectorAll('.btn-res-tab').forEach(b => b.classList.remove('btn-primary'));
-        btn.classList.add('btn-primary');
-        const selIdx = parseInt(btn.dataset.idx, 10);
-        const selObj = selectResults[selIdx];
-        this.renderTable(selObj.columns, selObj.rows);
-        this.statsBadge.textContent = `⚡ ${durationMs} ms | Resultado ${selIdx + 1} (${selObj.rows.length} filas)`;
+        const idx = parseInt(btn.dataset.idx, 10);
+        this.selectResultTab(idx, durationMs);
       });
-    });
-
-    this.renderTable(selectResults[0].columns, selectResults[0].rows);
-    this.statsBadge.textContent = `⚡ ${durationMs} ms | ${selectResults.length} consultas (${selectResults[0].rows.length} filas)`;
-
-    selectResults.forEach((sr, idx) => {
-      this.logMessage(`Consulta ${idx + 1} completada: ${sr.rows.length} filas devueltas.`, 'success');
     });
   }
 
-  clearResultNavPills() {
-    const pills = document.getElementById('resultsNavPills');
-    if (pills) pills.remove();
+  selectResultTab(idx, durationMs) {
+    if (!this.activeSelectResults || !this.activeSelectResults[idx]) return;
+    this.currentSelectIdx = idx;
+
+    if (this.resultsNav) {
+      this.resultsNav.querySelectorAll('.results-tab-btn').forEach((btn) => {
+        const bIdx = parseInt(btn.dataset.idx, 10);
+        btn.classList.toggle('active', bIdx === idx);
+      });
+    }
+
+    const sel = this.activeSelectResults[idx];
+    this.renderTable(sel.columns, sel.rows);
+
+    const countInfo = sel.is_limited
+      ? `${sel.rows.length} de ${sel.total_count} filas (limitado a ${sel.limit})`
+      : `${sel.rows.length} fila${sel.rows.length === 1 ? '' : 's'}`;
+    const prefix = this.activeSelectResults.length > 1 ? `Resultado ${idx + 1}: ` : '';
+    this.statsBadge.textContent = `⚡ ${durationMs} ms | ${prefix}${countInfo}`;
+  }
+
+  renderSingleCustomTab(title, count) {
+    this.activeSelectResults = [];
+    this.currentSelectIdx = 0;
+    this.resultsNav = document.getElementById('resultsNavTabs') || document.querySelector('.results-header .results-nav');
+    if (!this.resultsNav) return;
+    this.resultsNav.innerHTML = `
+      <button class="results-tab-btn active" data-idx="0">
+        <i data-lucide="activity" style="width:13px; height:13px;"></i>
+        <span>${this.escapeHtml(title)}</span>
+        <span class="results-tab-pill">${count}</span>
+      </button>
+    `;
+    if (window.lucide) lucide.createIcons();
   }
 
   renderTable(columns, rows) {
-    this.currentColumns = columns;
-    this.currentRows = rows;
+    this.currentColumns = columns || [];
+    this.currentRows = rows || [];
     this.sortCol = null;
+    this.sortAsc = true;
 
-    this.emptyState.style.display = 'none';
-    this.resultsTable.style.display = 'table';
+    if (this.emptyState) this.emptyState.style.display = 'none';
+    if (this.resultsTable) this.resultsTable.style.display = 'table';
 
     // Render Headers
-    let headHtml = '<tr><th style="width:40px; text-align:center;">#</th>';
-    columns.forEach((col, idx) => {
-      headHtml += `<th data-col-idx="${idx}">${col}</th>`;
+    let headHtml = '<tr><th style="width:46px; text-align:center; user-select:none;">#</th>';
+    this.currentColumns.forEach((col, idx) => {
+      headHtml += `<th data-col-idx="${idx}" title="Clic para ordenar">${this.escapeHtml(col)} <span class="sort-icon" style="font-size:10px; opacity:0.6;"></span></th>`;
     });
     headHtml += '</tr>';
     this.resultsHead.innerHTML = headHtml;
@@ -403,25 +489,64 @@ class QueryExecutor {
       });
     });
 
-    this.renderRows(rows);
+    if (this.panelResults) {
+      this.panelResults.scrollTop = 0;
+    }
+
+    this.renderVirtualSlice();
   }
 
-  renderRows(rows) {
-    let bodyHtml = '';
-    rows.forEach((row, rIdx) => {
-      bodyHtml += `<tr><td style="text-align:center; color:var(--text-dim);">${rIdx + 1}</td>`;
-      row.forEach(val => {
+  renderVirtualSlice() {
+    if (!this.resultsBody) return;
+
+    if (!this.currentRows || this.currentRows.length === 0) {
+      const colSpan = (this.currentColumns ? this.currentColumns.length : 0) + 1;
+      this.resultsBody.innerHTML = `<tr><td colspan="${colSpan}" style="text-align:center; color:var(--text-dim); padding:20px;">Sin filas devueltas</td></tr>`;
+      return;
+    }
+
+    const totalRows = this.currentRows.length;
+    const scrollTop = this.panelResults ? this.panelResults.scrollTop : 0;
+    const viewportHeight = (this.panelResults && this.panelResults.clientHeight) ? this.panelResults.clientHeight : 400;
+
+    // Calculate visible range with buffer
+    const startIdx = Math.max(0, Math.floor(scrollTop / this.ROW_HEIGHT) - this.OVERSCAN);
+    const endIdx = Math.min(totalRows, Math.ceil((scrollTop + viewportHeight) / this.ROW_HEIGHT) + this.OVERSCAN);
+
+    const topSpacerHeight = startIdx * this.ROW_HEIGHT;
+    const bottomSpacerHeight = (totalRows - endIdx) * this.ROW_HEIGHT;
+    const colSpan = this.currentColumns.length + 1;
+
+    let html = '';
+
+    // Top virtual spacer
+    if (topSpacerHeight > 0) {
+      html += `<tr class="virtual-spacer-row" style="height:${topSpacerHeight}px;"><td colspan="${colSpan}" style="height:${topSpacerHeight}px;"></td></tr>`;
+    }
+
+    // Rendered window slice
+    for (let i = startIdx; i < endIdx; i++) {
+      const row = this.currentRows[i];
+      html += `<tr><td style="text-align:center; color:var(--text-dim); font-size:11px; user-select:none;">${i + 1}</td>`;
+      for (let c = 0; c < row.length; c++) {
+        const val = row[c];
         if (val === null) {
-          bodyHtml += '<td><span class="null-badge">NULL</span></td>';
+          html += '<td><span class="null-badge">NULL</span></td>';
         } else {
           const strVal = String(val);
-          const escaped = strVal.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-          bodyHtml += `<td title="${escaped}">${escaped}</td>`;
+          const escaped = this.escapeHtml(strVal);
+          html += `<td title="${escaped}">${escaped}</td>`;
         }
-      });
-      bodyHtml += '</tr>';
-    });
-    this.resultsBody.innerHTML = bodyHtml;
+      }
+      html += '</tr>';
+    }
+
+    // Bottom virtual spacer
+    if (bottomSpacerHeight > 0) {
+      html += `<tr class="virtual-spacer-row" style="height:${bottomSpacerHeight}px;"><td colspan="${colSpan}" style="height:${bottomSpacerHeight}px;"></td></tr>`;
+    }
+
+    this.resultsBody.innerHTML = html;
   }
 
   sortTable(colIdx) {
@@ -432,9 +557,22 @@ class QueryExecutor {
       this.sortAsc = true;
     }
 
-    const sorted = [...this.currentRows].sort((a, b) => {
+    this.resultsHead.querySelectorAll('th[data-col-idx]').forEach(th => {
+      const idx = parseInt(th.dataset.colIdx, 10);
+      const iconSpan = th.querySelector('.sort-icon');
+      if (idx === colIdx) {
+        th.style.color = '#38bdf8';
+        if (iconSpan) iconSpan.textContent = this.sortAsc ? ' ▲' : ' ▼';
+      } else {
+        th.style.color = '';
+        if (iconSpan) iconSpan.textContent = '';
+      }
+    });
+
+    this.currentRows.sort((a, b) => {
       const vA = a[colIdx];
       const vB = b[colIdx];
+      if (vA === null && vB === null) return 0;
       if (vA === null) return 1;
       if (vB === null) return -1;
       if (typeof vA === 'number' && typeof vB === 'number') {
@@ -445,7 +583,7 @@ class QueryExecutor {
         : String(vB).localeCompare(String(vA));
     });
 
-    this.renderRows(sorted);
+    this.renderVirtualSlice();
   }
 
   logMessage(text, type = 'info') {

@@ -47,6 +47,7 @@ class SwitchDbRequest(BaseModel):
 class QueryRequest(BaseModel):
     sql: str
     database: Optional[str] = None
+    limit: Optional[int] = 100
 
 class ProcedureExecRequest(BaseModel):
     parameters: Dict[str, Any] = Field(default_factory=dict)
@@ -252,7 +253,7 @@ def run_procedure(database: str, proc_name: str, req: ProcedureExecRequest):
 # --- Query API ---
 @app.post("/api/query/execute")
 def run_query(req: QueryRequest):
-    result = execute_query(req.sql, req.database)
+    result = execute_query(req.sql, req.database, limit=req.limit)
     return result
 
 @app.post("/api/query/explain")

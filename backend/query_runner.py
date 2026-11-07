@@ -5,7 +5,7 @@ import pymysql
 from .db_manager import manager, serialize_value
 from .storage import add_history
 
-def execute_query(sql: str, database: Optional[str] = None) -> Dict[str, Any]:
+def execute_query(sql: str, database: Optional[str] = None, limit: Optional[int] = 100) -> Dict[str, Any]:
     session = manager.get_active()
     if not session:
         raise ValueError("No hay una conexión activa a MySQL")
@@ -34,14 +34,27 @@ def execute_query(sql: str, database: Optional[str] = None) -> Dict[str, Any]:
                 if cursor.description:
                     cols = [d[0] for d in cursor.description]
                     rows = cursor.fetchall()
+                    total_count = len(rows)
+                    is_limited = False
+                    if limit and limit > 0 and total_count > limit:
+                        rows = rows[:limit]
+                        is_limited = True
                     serialized_rows = [[serialize_value(c) for c in r] for r in rows]
+                    msg = (
+                        f"{len(serialized_rows)} de {total_count} filas (limitado a {limit})"
+                        if is_limited
+                        else f"{len(serialized_rows)} fila{'s' if len(serialized_rows) != 1 else ''} devuelta{'s' if len(serialized_rows) != 1 else ''}"
+                    )
                     results.append({
                         "statement_index": stmt_idx,
                         "type": "SELECT",
                         "columns": cols,
                         "rows": serialized_rows,
-                        "row_count": len(rows),
-                        "message": f"{len(rows)} fila{'s' if len(rows) != 1 else ''} devuelta{'s' if len(rows) != 1 else ''}"
+                        "row_count": len(serialized_rows),
+                        "total_count": total_count,
+                        "is_limited": is_limited,
+                        "limit": limit,
+                        "message": msg
                     })
                 else:
                     affected = cursor.rowcount if cursor.rowcount >= 0 else 0
