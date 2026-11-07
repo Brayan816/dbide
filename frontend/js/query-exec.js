@@ -7,35 +7,35 @@ class QueryExecutor {
     this.resultsBody = document.getElementById('resultsTableBody');
     this.emptyState = document.getElementById('emptyResultsState');
     this.messagesBox = document.getElementById('panelMessages');
-    this.explainHead = document.getElementById('explainTableHead');
-    this.explainBody = document.getElementById('explainTableBody');
+    this.messagesView = document.getElementById('sidebarMessagesView');
+    this.msgBadge = document.getElementById('sidebarMsgBadge');
     this.statsBadge = document.getElementById('resultStatsBadge');
 
     this.currentColumns = [];
     this.currentRows = [];
     this.sortCol = null;
     this.sortAsc = true;
+    this.unreadMessages = 0;
 
-    this.bindPanelNav();
     this.bindExports();
+    this.bindClearMessages();
   }
 
-  bindPanelNav() {
-    document.querySelectorAll('.results-tab-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('.results-tab-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-
-        const targetId = btn.dataset.target;
-        ['panelResults', 'panelMessages', 'panelExplain', 'panelHistoryDock'].forEach(id => {
-          const el = document.getElementById(id);
-          if (el) el.style.display = (id === targetId) ? 'block' : 'none';
-        });
-        if (targetId === 'panelHistoryDock' && window.app && window.app.renderHistoryDock) {
-          window.app.renderHistoryDock();
-        }
-      });
+  bindClearMessages() {
+    document.getElementById('btnClearMessages')?.addEventListener('click', () => {
+      if (this.messagesBox) {
+        this.messagesBox.innerHTML = '<div class="msg-entry msg-info">Consola limpiada.</div>';
+      }
+      this.resetMessageBadge();
     });
+  }
+
+  resetMessageBadge() {
+    this.unreadMessages = 0;
+    if (this.msgBadge) {
+      this.msgBadge.style.display = 'none';
+      this.msgBadge.textContent = '0';
+    }
   }
 
   bindExports() {
@@ -266,6 +266,7 @@ class QueryExecutor {
 
       const results = data.results || [];
       if (results.length === 0) {
+        this.clearResultNavPills();
         this.logMessage(`Consulta ejecutada correctamente (${data.duration_ms} ms). Sin filas afectadas.`, 'success');
         this.switchTab('panelMessages');
         this.statsBadge.textContent = `⚡ ${data.duration_ms} ms`;
@@ -273,14 +274,22 @@ class QueryExecutor {
       }
 
       // Check primary result set
-      const firstSelect = results.find(r => r.type === 'SELECT');
-      if (firstSelect && firstSelect.columns.length > 0) {
-        this.renderTable(firstSelect.columns, firstSelect.rows);
-        this.switchTab('panelResults');
-        this.statsBadge.textContent = `⚡ ${data.duration_ms} ms | ${firstSelect.rows.length} fila${firstSelect.rows.length === 1 ? '' : 's'}`;
-        this.logMessage(`Consulta completada (${data.duration_ms} ms): ${firstSelect.rows.length} filas devueltas.`, 'success');
+      const selectResults = results.filter(r => r.type === 'SELECT' && r.columns && r.columns.length > 0);
+      if (selectResults.length > 0) {
+        if (selectResults.length === 1) {
+          const firstSelect = selectResults[0];
+          this.clearResultNavPills();
+          this.renderTable(firstSelect.columns, firstSelect.rows);
+          this.switchTab('panelResults');
+          this.statsBadge.textContent = `⚡ ${data.duration_ms} ms | ${firstSelect.rows.length} fila${firstSelect.rows.length === 1 ? '' : 's'}`;
+          this.logMessage(`Consulta completada (${data.duration_ms} ms): ${firstSelect.rows.length} filas devueltas.`, 'success');
+        } else {
+          // Multiple SELECT queries returned
+          this.renderMultiSelectResults(selectResults, data.duration_ms);
+        }
       } else {
         // Mutation or DDL
+        this.clearResultNavPills();
         const totalAffected = results.reduce((acc, r) => acc + (r.row_count || 0), 0);
         this.logMessage(`Comandos ejecutados (${data.duration_ms} ms). Total filas afectadas: ${totalAffected}.`, 'success');
         this.switchTab('panelMessages');
@@ -310,15 +319,64 @@ class QueryExecutor {
         throw new Error(data.detail || data.error || 'Error al ejecutar EXPLAIN');
       }
 
-      this.renderExplain(data.columns, data.rows);
-      this.switchTab('panelExplain');
-      this.statsBadge.textContent = `Plan EXPLAIN (${data.duration_ms} ms)`;
+      this.renderTable(data.columns, data.rows);
+      this.statsBadge.textContent = `⚡ EXPLAIN (${data.duration_ms} ms) | ${data.rows.length} fila${data.rows.length === 1 ? '' : 's'}`;
+      this.logMessage(`Plan EXPLAIN completado (${data.duration_ms} ms): ${data.rows.length} filas analizadas.`, 'info');
     } catch (err) {
       this.logMessage(`Error en EXPLAIN: ${err.message}`, 'error');
       this.switchTab('panelMessages');
+      this.statsBadge.textContent = '❌ Error en EXPLAIN';
     } finally {
       this.setLoading(false);
     }
+  }
+
+  renderMultiSelectResults(selectResults, durationMs) {
+    this.switchTab('panelResults');
+    const nav = document.querySelector('.results-header .results-nav');
+    if (!nav) {
+      this.renderTable(selectResults[0].columns, selectResults[0].rows);
+      return;
+    }
+
+    let pillsContainer = document.getElementById('resultsNavPills');
+    if (!pillsContainer) {
+      pillsContainer = document.createElement('div');
+      pillsContainer.id = 'resultsNavPills';
+      pillsContainer.style.display = 'flex';
+      pillsContainer.style.gap = '4px';
+      pillsContainer.style.marginLeft = '8px';
+      nav.appendChild(pillsContainer);
+    }
+
+    pillsContainer.innerHTML = selectResults.map((sr, idx) => `
+      <button class="btn btn-sm btn-res-tab ${idx === 0 ? 'btn-primary' : ''}" data-idx="${idx}" style="font-size:11px; padding:2px 8px;">
+        Resultado ${idx + 1} (${sr.rows.length})
+      </button>
+    `).join('');
+
+    pillsContainer.querySelectorAll('.btn-res-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        pillsContainer.querySelectorAll('.btn-res-tab').forEach(b => b.classList.remove('btn-primary'));
+        btn.classList.add('btn-primary');
+        const selIdx = parseInt(btn.dataset.idx, 10);
+        const selObj = selectResults[selIdx];
+        this.renderTable(selObj.columns, selObj.rows);
+        this.statsBadge.textContent = `⚡ ${durationMs} ms | Resultado ${selIdx + 1} (${selObj.rows.length} filas)`;
+      });
+    });
+
+    this.renderTable(selectResults[0].columns, selectResults[0].rows);
+    this.statsBadge.textContent = `⚡ ${durationMs} ms | ${selectResults.length} consultas (${selectResults[0].rows.length} filas)`;
+
+    selectResults.forEach((sr, idx) => {
+      this.logMessage(`Consulta ${idx + 1} completada: ${sr.rows.length} filas devueltas.`, 'success');
+    });
+  }
+
+  clearResultNavPills() {
+    const pills = document.getElementById('resultsNavPills');
+    if (pills) pills.remove();
   }
 
   renderTable(columns, rows) {
@@ -390,23 +448,6 @@ class QueryExecutor {
     this.renderRows(sorted);
   }
 
-  renderExplain(columns, rows) {
-    let headHtml = '<tr>';
-    columns.forEach(col => { headHtml += `<th>${col}</th>`; });
-    headHtml += '</tr>';
-    this.explainHead.innerHTML = headHtml;
-
-    let bodyHtml = '';
-    rows.forEach(row => {
-      bodyHtml += '<tr>';
-      row.forEach(val => {
-        bodyHtml += `<td>${val === null ? '<span class="null-badge">NULL</span>' : val}</td>`;
-      });
-      bodyHtml += '</tr>';
-    });
-    this.explainBody.innerHTML = bodyHtml;
-  }
-
   logMessage(text, type = 'info') {
     let cls = 'msg-info';
     if (type === 'error') cls = 'msg-error';
@@ -417,13 +458,31 @@ class QueryExecutor {
     const entry = document.createElement('div');
     entry.className = `msg-entry ${cls}`;
     entry.textContent = `[${time}] ${text}`;
-    this.messagesBox.appendChild(entry);
-    this.messagesBox.scrollTop = this.messagesBox.scrollHeight;
+    if (this.messagesBox) {
+      this.messagesBox.appendChild(entry);
+    }
+    if (this.messagesView) {
+      this.messagesView.scrollTop = this.messagesView.scrollHeight;
+    }
+
+    if (window.app && window.app.activeSidebarTab !== 'messages') {
+      this.unreadMessages++;
+      if (this.msgBadge) {
+        this.msgBadge.textContent = this.unreadMessages > 99 ? '99+' : this.unreadMessages;
+        this.msgBadge.style.display = 'inline-block';
+        if (type === 'error') {
+          this.msgBadge.style.background = '#ef4444';
+        }
+      }
+    }
   }
 
   switchTab(targetId) {
-    const btn = document.querySelector(`.results-tab-btn[data-target="${targetId}"]`);
-    if (btn) btn.click();
+    if (targetId === 'panelMessages') {
+      if (window.app && window.app.switchSidebarTab) {
+        window.app.switchSidebarTab('messages');
+      }
+    }
   }
 
   setLoading(loading) {

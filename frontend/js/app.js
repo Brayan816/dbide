@@ -8,12 +8,18 @@ class App {
     this.currentDatabase = null;
     this.connected = false;
 
+    // Sidebar collapse state
+    this.isSidebarCollapsed = localStorage.getItem('dbide_sidebar_collapsed') === 'true';
+    this.isAutoCollapseEnabled = localStorage.getItem('dbide_sidebar_autocollapse') === 'true';
+    this.activeSidebarTab = 'explorer';
+
     this.schemaTree = new SchemaTree('schemaTree', (action, payload) => this.handleSchemaAction(action, payload));
     this.procModal = new ProcedureModal();
     this.queryExec = new QueryExecutor();
 
     this.initElements();
     this.bindEvents();
+    this.initSidebarCollapse();
     this.initSplitter();
     this.checkInitialSession();
   }
@@ -25,6 +31,21 @@ class App {
     this.dbSelect = document.getElementById('databaseSelect');
     this.statusDot = document.getElementById('statusDot');
     this.connectionText = document.getElementById('connectionText');
+    this.sidebarEl = document.getElementById('appSidebar');
+    this.sidebarStripEl = document.getElementById('sidebarCollapsedStrip');
+    this.btnCollapseSidebar = document.getElementById('btnCollapseSidebar');
+    this.btnExpandSidebar = document.getElementById('btnExpandSidebar');
+    this.btnHeaderToggleSidebar = document.getElementById('btnHeaderToggleSidebar');
+    this.btnToggleAutoCollapse = document.getElementById('btnToggleAutoCollapse');
+    this.collapsedStripAutoBadge = document.getElementById('collapsedStripAutoBadge');
+
+    // Sidebar navigation tabs
+    this.tabBtnExplorer = document.getElementById('tabBtnExplorer');
+    this.tabBtnMessages = document.getElementById('tabBtnMessages');
+    this.sidebarExplorerFilterWrap = document.getElementById('sidebarExplorerFilterWrap');
+    this.sidebarMessagesToolbar = document.getElementById('sidebarMessagesToolbar');
+    this.schemaTreeEl = document.getElementById('schemaTree');
+    this.sidebarMessagesView = document.getElementById('sidebarMessagesView');
   }
 
   bindEvents() {
@@ -62,7 +83,6 @@ class App {
     document.getElementById('historyTypeFilter')?.addEventListener('change', () => this.loadHistoryModal());
     document.getElementById('historyDbFilter')?.addEventListener('change', () => this.loadHistoryModal());
     document.getElementById('historySearchInput')?.addEventListener('input', () => this.loadHistoryModal());
-    document.getElementById('btnRefreshHistoryDock')?.addEventListener('click', () => this.renderHistoryDock());
 
     // Shortcuts Modal
     document.getElementById('btnShortcuts')?.addEventListener('click', () => {
@@ -106,8 +126,39 @@ class App {
 
     // Global desktop app keyboard shortcuts
     window.addEventListener('keydown', (e) => {
+      // Ctrl+Enter / Cmd+Enter: Execute selected query or statement in active tab
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        if (!e.target.closest('input, textarea, .modal-dialog')) {
+          e.preventDefault();
+          const activeTab = this.tabs.find(t => t.id === this.activeTabId && t.type === 'query');
+          if (activeTab && activeTab.editorInstance) {
+            const sql = (typeof activeTab.editorInstance.getQueryToRun === 'function')
+              ? activeTab.editorInstance.getQueryToRun()
+              : (activeTab.editorInstance.getSelectedText() || activeTab.editorInstance.getValue());
+            this.onAutoCollapseTrigger();
+            this.queryExec.run(sql, this.currentDatabase);
+          }
+        }
+      }
+      // F5: Execute selected query or statement in active tab
+      else if (e.key === 'F5') {
+        e.preventDefault();
+        const activeTab = this.tabs.find(t => t.id === this.activeTabId && t.type === 'query');
+        if (activeTab && activeTab.editorInstance) {
+          const sql = (typeof activeTab.editorInstance.getQueryToRun === 'function')
+            ? activeTab.editorInstance.getQueryToRun()
+            : (activeTab.editorInstance.getSelectedText() || activeTab.editorInstance.getValue());
+          this.onAutoCollapseTrigger();
+          this.queryExec.run(sql, this.currentDatabase);
+        }
+      }
+      // Ctrl+B / Cmd+B: Toggle sidebar
+      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        this.toggleSidebar();
+      }
       // Ctrl+T: New query tab
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 't') {
+      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 't') {
         e.preventDefault();
         this.createQueryTab();
       }
@@ -164,6 +215,163 @@ class App {
         }
       }
     });
+  }
+
+  // --- Sidebar Collapse & Auto-Collapse ---
+  initSidebarCollapse() {
+    this.btnCollapseSidebar?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.collapseSidebar();
+    });
+
+    this.btnExpandSidebar?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.expandSidebar();
+    });
+
+    this.sidebarStripEl?.addEventListener('click', (e) => {
+      if (!e.target.closest('#btnExpandSidebar')) {
+        this.expandSidebar();
+      }
+    });
+
+    this.btnHeaderToggleSidebar?.addEventListener('click', () => {
+      this.toggleSidebar();
+    });
+
+    this.btnToggleAutoCollapse?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.toggleAutoCollapse();
+    });
+
+    // Sidebar tab clicks (Explorador / Mensajes)
+    this.tabBtnExplorer?.addEventListener('click', () => {
+      this.switchSidebarTab('explorer');
+    });
+
+    this.tabBtnMessages?.addEventListener('click', () => {
+      this.switchSidebarTab('messages');
+    });
+
+    this.applySidebarState();
+    this.updateAutoCollapseButton();
+  }
+
+  switchSidebarTab(tabName) {
+    this.activeSidebarTab = tabName;
+
+    // Expand sidebar if it was collapsed so the user can see the panel
+    if (this.isSidebarCollapsed) {
+      this.expandSidebar();
+    }
+
+    if (tabName === 'messages') {
+      this.tabBtnMessages?.classList.add('active');
+      this.tabBtnExplorer?.classList.remove('active');
+      if (this.sidebarExplorerFilterWrap) this.sidebarExplorerFilterWrap.style.display = 'none';
+      if (this.sidebarMessagesToolbar) this.sidebarMessagesToolbar.style.display = 'flex';
+      if (this.schemaTreeEl) this.schemaTreeEl.style.display = 'none';
+      if (this.sidebarMessagesView) {
+        this.sidebarMessagesView.style.display = 'flex';
+        this.sidebarMessagesView.scrollTop = this.sidebarMessagesView.scrollHeight;
+      }
+      this.queryExec?.resetMessageBadge();
+    } else {
+      this.tabBtnExplorer?.classList.add('active');
+      this.tabBtnMessages?.classList.remove('active');
+      if (this.sidebarExplorerFilterWrap) this.sidebarExplorerFilterWrap.style.display = 'block';
+      if (this.sidebarMessagesToolbar) this.sidebarMessagesToolbar.style.display = 'none';
+      if (this.schemaTreeEl) this.schemaTreeEl.style.display = 'block';
+      if (this.sidebarMessagesView) this.sidebarMessagesView.style.display = 'none';
+    }
+
+    if (window.lucide) {
+      lucide.createIcons();
+    }
+  }
+
+  toggleSidebar() {
+    if (this.isSidebarCollapsed) {
+      this.expandSidebar();
+    } else {
+      this.collapseSidebar();
+    }
+  }
+
+  collapseSidebar() {
+    this.isSidebarCollapsed = true;
+    localStorage.setItem('dbide_sidebar_collapsed', 'true');
+    this.applySidebarState();
+  }
+
+  expandSidebar() {
+    this.isSidebarCollapsed = false;
+    localStorage.setItem('dbide_sidebar_collapsed', 'false');
+    this.applySidebarState();
+  }
+
+  toggleAutoCollapse() {
+    this.isAutoCollapseEnabled = !this.isAutoCollapseEnabled;
+    localStorage.setItem('dbide_sidebar_autocollapse', String(this.isAutoCollapseEnabled));
+    this.updateAutoCollapseButton();
+  }
+
+  updateAutoCollapseButton() {
+    if (this.btnToggleAutoCollapse) {
+      if (this.isAutoCollapseEnabled) {
+        this.btnToggleAutoCollapse.classList.add('active');
+        this.btnToggleAutoCollapse.setAttribute('title', 'Modo Auto activado: se contrae al ejecutar queries o abrir tablas (clic para desactivar)');
+      } else {
+        this.btnToggleAutoCollapse.classList.remove('active');
+        this.btnToggleAutoCollapse.setAttribute('title', 'Modo Auto: colapsa el explorador automáticamente al ejecutar consultas o abrir datos (clic para activar)');
+      }
+    }
+    if (this.collapsedStripAutoBadge) {
+      this.collapsedStripAutoBadge.style.display = this.isAutoCollapseEnabled ? 'block' : 'none';
+    }
+    if (window.lucide) {
+      lucide.createIcons();
+    }
+  }
+
+  applySidebarState() {
+    if (this.isSidebarCollapsed) {
+      this.sidebarEl?.classList.add('collapsed');
+      if (this.sidebarStripEl) this.sidebarStripEl.style.display = 'flex';
+      if (this.btnHeaderToggleSidebar) {
+        this.btnHeaderToggleSidebar.classList.add('active');
+        this.btnHeaderToggleSidebar.setAttribute('title', 'Mostrar Explorador lateral (Ctrl+B / ⌘+B)');
+      }
+    } else {
+      this.sidebarEl?.classList.remove('collapsed');
+      if (this.sidebarStripEl) this.sidebarStripEl.style.display = 'none';
+      if (this.btnHeaderToggleSidebar) {
+        this.btnHeaderToggleSidebar.classList.remove('active');
+        this.btnHeaderToggleSidebar.setAttribute('title', 'Ocultar Explorador lateral (Ctrl+B / ⌘+B)');
+      }
+    }
+    this.layoutActiveEditor();
+    if (window.lucide) {
+      lucide.createIcons();
+    }
+  }
+
+  layoutActiveEditor() {
+    const runLayout = () => {
+      const activeTab = this.tabs.find(t => t.id === this.activeTabId);
+      if (activeTab && activeTab.editorInstance) {
+        activeTab.editorInstance.layout();
+      }
+    };
+    runLayout();
+    setTimeout(runLayout, 80);
+    setTimeout(runLayout, 240);
+  }
+
+  onAutoCollapseTrigger() {
+    if (this.isAutoCollapseEnabled && !this.isSidebarCollapsed) {
+      this.collapseSidebar();
+    }
   }
 
   // --- Session Management ---
@@ -348,6 +556,9 @@ class App {
   createQueryTab(initialSql = '', title = null) {
     const tabId = `tab_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
     const tabTitle = title || `Query ${this.tabCounter++}`;
+    const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || '');
+    const execHint = isMac ? '⌘ + Enter para ejecutar' : 'Ctrl + Enter para ejecutar';
+    const saveHint = isMac ? 'Cmd+S' : 'Ctrl+S';
 
     const tabItem = document.createElement('div');
     tabItem.className = 'tab-item';
@@ -365,21 +576,21 @@ class App {
     pane.innerHTML = `
       <div class="editor-toolbar">
         <div class="editor-toolbar-left">
-          <button class="btn btn-primary btn-sm btn-run-query">
+          <button class="btn btn-primary btn-sm btn-run-query" title="Ejecutar consulta seleccionada o activa (${execHint})">
             <i data-lucide="play" style="width:13px; height:13px;"></i> Ejecutar
           </button>
-          <button class="btn btn-sm btn-explain-query">
+          <button class="btn btn-sm btn-explain-query" title="Plan EXPLAIN de la consulta seleccionada o activa">
             <i data-lucide="activity" style="width:13px; height:13px;"></i> Explicar
           </button>
           <button class="btn btn-sm btn-format-query">
             <i data-lucide="align-left" style="width:13px; height:13px;"></i> Formatear
           </button>
-          <button class="btn btn-sm btn-save-tab-query" title="Guardar consulta en favoritas (Ctrl+S)">
+          <button class="btn btn-sm btn-save-tab-query" title="Guardar consulta en favoritas (${saveHint})">
             <i data-lucide="bookmark" style="width:13px; height:13px;"></i> Guardar
           </button>
         </div>
         <div class="editor-toolbar-right">
-          <span>Ctrl + Enter para ejecutar</span>
+          <span>${execHint}</span>
         </div>
       </div>
       <div class="editor-container">
@@ -405,7 +616,10 @@ class App {
     createEditor(
       monacoBox,
       initialSql || '-- Escribe tu consulta SQL aquí\nSELECT 1;\n',
-      (sql) => { this.queryExec.run(sql, this.currentDatabase); },
+      (sql) => {
+        this.onAutoCollapseTrigger();
+        this.queryExec.run(sql, this.currentDatabase);
+      },
       (sql) => { this.openSaveQueryModal(tabObj, sql); }
     ).then(editor => {
       tabObj.editorInstance = editor;
@@ -414,7 +628,10 @@ class App {
     // Toolbar buttons
     pane.querySelector('.btn-run-query').addEventListener('click', () => {
       if (tabObj.editorInstance) {
-        const sql = tabObj.editorInstance.getSelectedText() || tabObj.editorInstance.getValue();
+        const sql = (typeof tabObj.editorInstance.getQueryToRun === 'function')
+          ? tabObj.editorInstance.getQueryToRun()
+          : (tabObj.editorInstance.getSelectedText() || tabObj.editorInstance.getValue());
+        this.onAutoCollapseTrigger();
         this.queryExec.run(sql, this.currentDatabase);
       }
     });
@@ -425,7 +642,10 @@ class App {
 
     pane.querySelector('.btn-explain-query').addEventListener('click', () => {
       if (tabObj.editorInstance) {
-        const sql = tabObj.editorInstance.getSelectedText() || tabObj.editorInstance.getValue();
+        const sql = (typeof tabObj.editorInstance.getQueryToRun === 'function')
+          ? tabObj.editorInstance.getQueryToRun()
+          : (tabObj.editorInstance.getSelectedText() || tabObj.editorInstance.getValue());
+        this.onAutoCollapseTrigger();
         this.queryExec.runExplain(sql, this.currentDatabase);
       }
     });
@@ -696,6 +916,10 @@ class App {
 
   // --- Schema Actions Handler ---
   handleSchemaAction(action, payload) {
+    if (['view_data', 'view_ddl', 'generate_select', 'generate_call_func', 'run_procedure'].includes(action)) {
+      this.onAutoCollapseTrigger();
+    }
+
     if (action === 'refresh_schema') {
       this.loadSchema(this.currentDatabase);
     } else if (action === 'view_data') {
@@ -1183,45 +1407,11 @@ class App {
     }
   }
 
-  async renderHistoryDock() {
-    const container = document.getElementById('historyDockContainer');
-    if (!container) return;
-    container.innerHTML = '<div style="padding:10px; color:var(--text-muted); font-size:12px;">Cargando registros...</div>';
-
-    try {
-      const res = await fetch('/api/query/history?limit=50');
-      const list = await res.json();
-      if (!list || !list.length) {
-        container.innerHTML = '<div style="padding:15px; color:var(--text-dim); font-size:12px;">No hay consultas recientes.</div>';
-        return;
-      }
-
-      container.innerHTML = list.map(item => `
-        <div style="background:#1a1a1e; border:1px solid var(--border-color); border-radius:5px; padding:8px 10px; margin-bottom:6px; font-size:12px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-            <div style="display:flex; align-items:center; gap:6px;">
-              ${this.getQueryTypeBadge(item.query_type)}
-              <span class="badge-db" style="font-size:10px;">📁 ${item.database_name || '(sin base)'}</span>
-              <span style="color:var(--text-dim); font-size:11px;">${new Date(item.executed_at).toLocaleTimeString()}</span>
-            </div>
-            <span style="font-size:11px; color:#38bdf8;">⚡ ${item.duration_ms} ms</span>
-          </div>
-          <pre style="font-family:var(--font-mono); font-size:11px; color:#e4e4e7; margin:0; white-space:pre-wrap; max-height:50px; overflow:hidden;">${item.query_text}</pre>
-        </div>
-      `).join('');
-
-      if (window.lucide) lucide.createIcons();
-    } catch (err) {
-      container.innerHTML = `<div class="msg-entry msg-error">Error: ${err.message}</div>`;
-    }
-  }
-
   async clearHistory() {
     if (!confirm('¿Deseas vaciar todo el registro de auditoría de consultas?')) return;
     try {
       await fetch('/api/query/history', { method: 'DELETE' });
       await this.loadHistoryModal();
-      await this.renderHistoryDock();
     } catch (err) {
       console.error(err);
     }

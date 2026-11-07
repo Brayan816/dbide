@@ -329,7 +329,7 @@ if os.path.exists(frontend_dir):
 @app.middleware("http")
 async def add_no_cache_headers(request, call_next):
     response = await call_next(request)
-    if request.url.path == "/" or request.url.path.startswith("/static/"):
+    if request.url.path in ("/", "/favicon.ico", "/icon.png") or request.url.path.startswith("/static/"):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
@@ -348,3 +348,17 @@ def serve_index():
             }
         )
     return {"message": "MySQL Debugger API is running. Frontend directory not found."}
+
+@app.get("/favicon.ico")
+def serve_favicon():
+    favicon_path = os.path.join(frontend_dir, "favicon.ico")
+    if os.path.exists(favicon_path):
+        return FileResponse(favicon_path, media_type="image/x-icon")
+    return Response(status_code=404)
+
+@app.get("/icon.png")
+def serve_icon_png():
+    icon_path = os.path.join(frontend_dir, "icon.png")
+    if os.path.exists(icon_path):
+        return FileResponse(icon_path, media_type="image/png")
+    return Response(status_code=404)

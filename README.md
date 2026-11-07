@@ -41,20 +41,55 @@ Un IDE moderno, ligero y rápido para administrar y consultar bases de datos MyS
 
 ## 🚀 Cómo Iniciar la Aplicación
 
-### Método 1: Doble Clic en Windows
-Simplemente haz doble clic en el archivo:
-- `run.bat`
+### 🍎 En macOS (Apple Silicon M1/M2/M3/M4 e Intel)
 
-### Método 2: Desde Terminal (PowerShell o CMD)
+> [!NOTE]
+> La aplicación está totalmente optimizada para la arquitectura ARM64 de Apple Silicon. Detecta automáticamente navegadores Chromium (Chrome, Brave, Edge, Arc) para ejecutarse como una ventana de escritorio nativa independiente sin barra de direcciones, y gestiona automáticamente un entorno virtual aislado (`.venv`).
+
+#### Opción 1: Con Doble Clic en el Finder
+Haz doble clic sobre el archivo ejecutable:
+- **`Iniciar_Mac.command`**
+
+*(La primera vez, si macOS lo solicita, autoriza la ejecución en Terminal).*
+
+#### Opción 2: Desde la Terminal
+```bash
+./run.sh
+```
+o manualmente:
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python3 main.py
+```
+
+---
+
+### 🪟 En Windows
+
+#### Opción 1: Con Doble Clic
+- **`MySQL_IDE.lnk`** (Acceso directo con el icono oficial de la aplicación)
+- **`run.bat`** o **`Iniciar_MySQL_IDE.vbs`** (sin ventana negra de consola)
+
+#### Opción 2: Desde PowerShell o CMD
 ```powershell
 .\run.ps1
 ```
-o
+o:
 ```bash
 python main.py
 ```
 
-La aplicación iniciará el servidor en `http://127.0.0.1:8000` y abrirá automáticamente tu navegador predeterminado.
+---
+
+### 🐧 En Linux
+```bash
+chmod +x run.sh
+./run.sh
+```
+
+La aplicación iniciará el servidor local en `http://127.0.0.1:8000` y abrirá automáticamente la ventana de escritorio nativa (o tu navegador predeterminado).
 
 ---
 

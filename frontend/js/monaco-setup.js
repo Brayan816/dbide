@@ -414,45 +414,381 @@ function parseAliasContext(fullTextBefore) {
   };
 }
 
-// Extract all tables and aliases from a statement or full document
+// Case-insensitive lookup of columns for a table
+function getColumnsForTable(tableName) {
+  if (!tableName) return [];
+  if (schemaColumnsMap[tableName]) return schemaColumnsMap[tableName];
+  const lower = tableName.toLowerCase();
+  const foundKey = Object.keys(schemaColumnsMap).find(k => k.toLowerCase() === lower);
+  return foundKey ? schemaColumnsMap[foundKey] : [];
+}
+
+// Case-insensitive lookup of canonical table name from schemaTables or schemaColumnsMap
+function getCanonicalTableName(tableName) {
+  if (!tableName) return '';
+  const lower = tableName.toLowerCase();
+  const directTable = schemaTables.find(t => t.name.toLowerCase() === lower);
+  if (directTable) return directTable.name;
+  const colKey = Object.keys(schemaColumnsMap).find(k => k.toLowerCase() === lower);
+  if (colKey) return colKey;
+  return tableName;
+}
+
+// Helper: Split top-level commas (ignoring commas inside parentheses)
+function splitTopLevelCommas(str) {
+  if (!str) return [];
+  const parts = [];
+  let depth = 0;
+  let lastIdx = 0;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    else if (ch === ',' && depth === 0) {
+      parts.push(str.slice(lastIdx, i));
+      lastIdx = i + 1;
+    }
+  }
+  parts.push(str.slice(lastIdx));
+  return parts;
+}
+
+// Helper: Get the exact SQL statement around the cursor (delimited by semicolons outside comments & strings)
+function getCurrentStatement(modelOrText, positionOrOffset) {
+  if (!modelOrText) return '';
+  const fullText = (typeof modelOrText === 'string')
+    ? modelOrText
+    : (modelOrText.getValue ? modelOrText.getValue() : '');
+  if (!fullText) return '';
+
+  let cursorOffset = fullText.length;
+  if (typeof positionOrOffset === 'number') {
+    cursorOffset = positionOrOffset;
+  } else if (positionOrOffset && typeof modelOrText.getOffsetAt === 'function') {
+    cursorOffset = modelOrText.getOffsetAt(positionOrOffset);
+  }
+
+  // Mask strings and comments so semicolons inside them are ignored
+  const maskedChars = fullText.split('');
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let inBacktick = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let i = 0; i < fullText.length; i++) {
+    const ch = fullText[i];
+    const nextCh = fullText[i + 1] || '';
+
+    if (inLineComment) {
+      if (ch === '\n' || ch === '\r') {
+        inLineComment = false;
+      } else {
+        maskedChars[i] = ' ';
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (ch === '*' && nextCh === '/') {
+        maskedChars[i] = ' ';
+        maskedChars[i + 1] = ' ';
+        inBlockComment = false;
+        i++;
+      } else {
+        maskedChars[i] = ' ';
+      }
+      continue;
+    }
+
+    if (inSingleQuote) {
+      if (ch === '\\' && i + 1 < fullText.length) {
+        maskedChars[i] = ' ';
+        maskedChars[i + 1] = ' ';
+        i++;
+      } else if (ch === "'") {
+        inSingleQuote = false;
+      } else {
+        maskedChars[i] = ' ';
+      }
+      continue;
+    }
+
+    if (inDoubleQuote) {
+      if (ch === '\\' && i + 1 < fullText.length) {
+        maskedChars[i] = ' ';
+        maskedChars[i + 1] = ' ';
+        i++;
+      } else if (ch === '"') {
+        inDoubleQuote = false;
+      } else {
+        maskedChars[i] = ' ';
+      }
+      continue;
+    }
+
+    if (inBacktick) {
+      if (ch === '`') {
+        inBacktick = false;
+      }
+      continue;
+    }
+
+    if (ch === '-' && nextCh === '-') {
+      inLineComment = true;
+      maskedChars[i] = ' ';
+      maskedChars[i + 1] = ' ';
+      i++;
+      continue;
+    }
+    if (ch === '#') {
+      inLineComment = true;
+      maskedChars[i] = ' ';
+      continue;
+    }
+    if (ch === '/' && nextCh === '*') {
+      inBlockComment = true;
+      maskedChars[i] = ' ';
+      maskedChars[i + 1] = ' ';
+      i++;
+      continue;
+    }
+    if (ch === "'") {
+      inSingleQuote = true;
+      continue;
+    }
+    if (ch === '"') {
+      inDoubleQuote = true;
+      continue;
+    }
+    if (ch === '`') {
+      inBacktick = true;
+      continue;
+    }
+  }
+
+  const maskedText = maskedChars.join('');
+
+  // Find previous semicolon before cursor
+  let startOffset = 0;
+  for (let i = Math.min(cursorOffset - 1, fullText.length - 1); i >= 0; i--) {
+    if (maskedText[i] === ';') {
+      startOffset = i + 1;
+      break;
+    }
+  }
+
+  // Find next semicolon after cursor
+  let endOffset = fullText.length;
+  for (let i = Math.max(0, cursorOffset); i < fullText.length; i++) {
+    if (maskedText[i] === ';') {
+      endOffset = i;
+      break;
+    }
+  }
+
+  const stmt = fullText.slice(startOffset, endOffset).trim();
+  return stmt || fullText;
+}
+
+// Extract all tables and aliases mentioned in a query statement or text
 function extractQueryTableAliases(text) {
   if (!text) return [];
   const cleaned = text
     .replace(/--[^\r\n]*/g, ' ')
+    .replace(/#[^\r\n]*/g, ' ')
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
     .replace(/'(?:[^'\\]|\\.)*'/g, ' ')
     .replace(/"(?:[^"\\]|\\.)*"/g, ' ');
 
   const tables = [];
-  const seen = new Set();
+  const existingAliases = new Set();
 
-  const fromMatch = cleaned.match(/\bFROM\s+([`\w]+)(?:\s+(?:AS\s+)?([`\w]+))?/i);
-  if (fromMatch) {
-    const tName = fromMatch[1].replace(/[`]/g, '');
-    let tAlias = fromMatch[2] ? fromMatch[2].replace(/[`]/g, '') : null;
-    if (tAlias && ['WHERE', 'JOIN', 'INNER', 'LEFT', 'RIGHT', 'ON', 'GROUP', 'ORDER', 'LIMIT', 'SET', 'VALUES'].includes(tAlias.toUpperCase())) {
-      tAlias = null;
+  const reservedWords = new Set([
+    'WHERE', 'JOIN', 'INNER', 'LEFT', 'RIGHT', 'FULL', 'CROSS', 'OUTER',
+    'STRAIGHT_JOIN', 'NATURAL', 'ON', 'USING', 'GROUP', 'ORDER', 'BY',
+    'LIMIT', 'OFFSET', 'SET', 'VALUES', 'HAVING', 'UNION', 'WINDOW',
+    'FOR', 'LOCK', 'SHARE', 'MODE', 'SELECT', 'AS', 'AND', 'OR', 'NOT',
+    'IN', 'IS', 'NULL', 'LIKE', 'BETWEEN', 'EXISTS', 'CASE', 'WHEN', 'THEN',
+    'ELSE', 'END', 'INTO', 'FROM', 'UPDATE', 'DELETE', 'INSERT', 'TABLE',
+    'RETURNING', 'DISTINCT', 'ALL'
+  ]);
+
+  const cleanTableName = (raw) => {
+    if (!raw) return '';
+    let parts = raw.split('.').map(p => p.replace(/[`"']/g, '').trim());
+    return parts[parts.length - 1] || '';
+  };
+
+  const addTable = (rawName, rawAlias) => {
+    const tName = cleanTableName(rawName);
+    if (!tName) return;
+    if (reservedWords.has(tName.toUpperCase())) return;
+
+    const canonicalName = getCanonicalTableName(tName);
+    const key = canonicalName.toLowerCase();
+
+    let cleanAlias = rawAlias ? rawAlias.replace(/[`"']/g, '').trim() : null;
+    if (cleanAlias && reservedWords.has(cleanAlias.toUpperCase())) {
+      cleanAlias = null;
     }
-    const finalAlias = tAlias || generateTableAlias(tName);
-    tables.push({ name: tName, alias: finalAlias, explicitAlias: !!tAlias });
-    seen.add(tName.toLowerCase());
+
+    const finalAlias = cleanAlias || generateTableAlias(canonicalName, existingAliases);
+    existingAliases.add(finalAlias.toLowerCase());
+
+    const already = tables.find(t => t.name.toLowerCase() === key && t.alias.toLowerCase() === finalAlias.toLowerCase());
+    if (!already) {
+      tables.push({
+        name: canonicalName,
+        rawName: tName,
+        alias: finalAlias,
+        explicitAlias: !!cleanAlias
+      });
+    }
+  };
+
+  // 1. FROM clauses (including comma-separated tables: FROM t1 a, t2 b, t3)
+  const fromClauseRegex = /\bFROM\s+([\s\S]+?)(?=\b(?:WHERE|JOIN|INNER\s+JOIN|LEFT\s+JOIN|RIGHT\s+JOIN|FULL\s+JOIN|CROSS\s+JOIN|STRAIGHT_JOIN|NATURAL\s+JOIN|GROUP\s+BY|HAVING|ORDER\s+BY|LIMIT|WINDOW|UNION|INTERSECT|EXCEPT|FOR\s+UPDATE|LOCK\s+IN)\b|;|$)/gi;
+  let fromMatch;
+  while ((fromMatch = fromClauseRegex.exec(cleaned)) !== null) {
+    const fromList = fromMatch[1];
+    const items = splitTopLevelCommas(fromList);
+    items.forEach(item => {
+      const trimmed = item.trim();
+      if (!trimmed || trimmed.startsWith('(')) return;
+      const m = trimmed.match(/^([`\w]+(?:\.[`\w]+)?)(?:\s+(?:AS\s+)?([`\w]+))?/i);
+      if (m) {
+        addTable(m[1], m[2]);
+      }
+    });
   }
 
-  const joinRegex = /\b(?:INNER\s+|LEFT\s+|RIGHT\s+|FULL\s+|CROSS\s+|STRAIGHT_)?(?:OUTER\s+)?JOIN\s+([`\w]+)(?:\s+(?:AS\s+)?([`\w]+))?/gi;
+  // 2. JOIN clauses
+  const joinRegex = /\b(?:INNER\s+|LEFT\s+|RIGHT\s+|FULL\s+|CROSS\s+|STRAIGHT_)?(?:OUTER\s+)?JOIN(?:\s+LATERAL)?\s+([`\w]+(?:\.[`\w]+)?)(?:\s+(?:AS\s+)?([`\w]+))?/gi;
   let jm;
   while ((jm = joinRegex.exec(cleaned)) !== null) {
-    const tName = jm[1].replace(/[`]/g, '');
-    let tAlias = jm[2] ? jm[2].replace(/[`]/g, '') : null;
-    if (tAlias && ['WHERE', 'JOIN', 'INNER', 'LEFT', 'RIGHT', 'ON', 'GROUP', 'ORDER', 'LIMIT', 'SET', 'VALUES'].includes(tAlias.toUpperCase())) {
-      tAlias = null;
+    if (jm[1] && !jm[1].startsWith('(')) {
+      addTable(jm[1], jm[2]);
     }
-    const existing = new Set(tables.map(t => t.alias.toLowerCase()));
-    const finalAlias = tAlias || generateTableAlias(tName, existing);
-    tables.push({ name: tName, alias: finalAlias, explicitAlias: !!tAlias });
-    seen.add(tName.toLowerCase());
+  }
+
+  // 3. UPDATE clauses
+  const updateRegex = /\bUPDATE\s+(?:LOW_PRIORITY\s+)?(?:IGNORE\s+)?([\s\S]+?)(?=\bSET\b|;|$)/gi;
+  let upMatch;
+  while ((upMatch = updateRegex.exec(cleaned)) !== null) {
+    const updateList = upMatch[1];
+    const items = splitTopLevelCommas(updateList);
+    items.forEach(item => {
+      const trimmed = item.trim();
+      if (!trimmed || trimmed.startsWith('(')) return;
+      const m = trimmed.match(/^([`\w]+(?:\.[`\w]+)?)(?:\s+(?:AS\s+)?([`\w]+))?/i);
+      if (m) {
+        addTable(m[1], m[2]);
+      }
+    });
+  }
+
+  // 4. INSERT INTO / REPLACE INTO
+  const insertRegex = /\b(?:INSERT(?:\s+LOW_PRIORITY|\s+DELAYED|\s+HIGH_PRIORITY)?(?:\s+IGNORE)?|REPLACE(?:\s+LOW_PRIORITY|\s+DELAYED)?)\s+(?:INTO\s+)?([`\w]+(?:\.[`\w]+)?)(?:\s+(?:AS\s+)?([`\w]+))?/gi;
+  let insMatch;
+  while ((insMatch = insertRegex.exec(cleaned)) !== null) {
+    if (insMatch[1]) {
+      addTable(insMatch[1], insMatch[2]);
+    }
+  }
+
+  // 5. DELETE FROM
+  const deleteRegex = /\bDELETE\b[\s\S]*?\bFROM\s+([`\w]+(?:\.[`\w]+)?)(?:\s+(?:AS\s+)?([`\w]+))?/gi;
+  let delMatch;
+  while ((delMatch = deleteRegex.exec(cleaned)) !== null) {
+    if (delMatch[1]) {
+      addTable(delMatch[1], delMatch[2]);
+    }
+  }
+
+  // 6. TABLE table_name
+  const tableStmtRegex = /\bTABLE\s+([`\w]+(?:\.[`\w]+)?)/gi;
+  let tblMatch;
+  while ((tblMatch = tableStmtRegex.exec(cleaned)) !== null) {
+    if (tblMatch[1]) {
+      addTable(tblMatch[1], null);
+    }
   }
 
   return tables;
+}
+
+// Build smart column suggestions for ONLY the tables mentioned in the query
+function buildColumnSuggestions(queryTables, range, options = {}) {
+  const suggestions = [];
+  if (!Array.isArray(queryTables) || queryTables.length === 0) return suggestions;
+
+  const seenUnqualified = new Set();
+  const includeQualified = options.includeQualified !== false;
+  const includeUnqualified = options.includeUnqualified !== false;
+  const includeTableQualified = options.includeTableQualified !== false;
+  const prio = options.priorityPrefix || '01_';
+
+  const fieldKind = (window.monaco?.languages?.CompletionItemKind?.Field ?? 4);
+
+  queryTables.forEach(t => {
+    const cols = getColumnsForTable(t.name);
+    cols.forEach(c => {
+      const typeStr = (c.full_type || c.data_type || 'columna').toUpperCase();
+
+      // 1. Qualified by Alias: u.id, p.total
+      if (includeQualified && t.alias) {
+        suggestions.push({
+          label: `${t.alias}.${c.name}`,
+          kind: fieldKind,
+          insertText: `${t.alias}.${c.name}`,
+          range: range,
+          detail: `${typeStr} • ${t.name}`,
+          documentation: {
+            value: `Columna **${c.name}** de la tabla **${t.name}** (usando alias \`${t.alias}\`)\nTipo: \`${typeStr}\``
+          },
+          sortText: `${prio}A_${t.alias}_${c.name}`
+        });
+      }
+
+      // 2. Qualified by full Table Name (if table name differs from alias): usuarios.id
+      if (includeTableQualified && t.name && t.name.toLowerCase() !== (t.alias || '').toLowerCase()) {
+        suggestions.push({
+          label: `${t.name}.${c.name}`,
+          kind: fieldKind,
+          insertText: `${t.name}.${c.name}`,
+          range: range,
+          detail: `${typeStr} • ${t.name}`,
+          documentation: {
+            value: `Columna **${c.name}** calificada por nombre completo de tabla **${t.name}**\nTipo: \`${typeStr}\``
+          },
+          sortText: `${prio}C_${t.name}_${c.name}`
+        });
+      }
+
+      // 3. Unqualified column name: id, total
+      if (includeUnqualified) {
+        const unqKey = c.name.toLowerCase();
+        const isDupe = seenUnqualified.has(unqKey);
+        seenUnqualified.add(unqKey);
+
+        const tableDetail = t.explicitAlias ? `${t.name} (${t.alias})` : t.name;
+        suggestions.push({
+          label: c.name,
+          kind: fieldKind,
+          insertText: c.name,
+          range: range,
+          detail: `${typeStr} • ${tableDetail}`,
+          documentation: {
+            value: `Columna **${c.name}** de la tabla **${t.name}**\nTipo: \`${typeStr}\``
+          },
+          sortText: `${prio}B_${c.name}${isDupe ? `_${t.alias}` : ''}`
+        });
+      }
+    });
+  });
+
+  return suggestions;
 }
 
 // Load Monaco from CDN
@@ -670,18 +1006,23 @@ function registerSqlCompletions() {
       if (dotMatch) {
         const qualifier = dotMatch[1].replace(/[`]/g, '');
         let targetTableName = null;
-        const fullDocText = model.getValue();
-        const queryTables = extractQueryTableAliases(fullDocText);
+        const currentStmt = getCurrentStatement(model, position);
+        const queryTables = extractQueryTableAliases(currentStmt);
         const aliasMatch = queryTables.find(t => t.alias.toLowerCase() === qualifier.toLowerCase());
         if (aliasMatch) {
           targetTableName = aliasMatch.name;
         } else {
-          const directMatch = schemaTables.find(t => t.name.toLowerCase() === qualifier.toLowerCase());
-          if (directMatch) targetTableName = directMatch.name;
+          const inQueryTable = queryTables.find(t => t.name.toLowerCase() === qualifier.toLowerCase());
+          if (inQueryTable) {
+            targetTableName = inQueryTable.name;
+          } else {
+            const directMatch = schemaTables.find(t => t.name.toLowerCase() === qualifier.toLowerCase());
+            if (directMatch) targetTableName = directMatch.name;
+          }
         }
 
         if (targetTableName) {
-          const cols = schemaColumnsMap[targetTableName] || [];
+          const cols = getColumnsForTable(targetTableName);
           cols.forEach(c => {
             suggestions.push({
               label: c.name,
@@ -946,7 +1287,7 @@ function registerSqlCompletions() {
 
         // Also suggest columns from current table and prev tables
         [onCtx.currentTable, ...onCtx.prevTables].forEach(tbl => {
-          const cols = schemaColumnsMap[tbl.name] || [];
+          const cols = getColumnsForTable(tbl.name);
           cols.forEach(c => {
             suggestions.push({
               label: `${tbl.alias}.${c.name}`,
@@ -955,6 +1296,14 @@ function registerSqlCompletions() {
               range: range,
               detail: `${c.full_type || c.data_type} • ${tbl.name}`,
               sortText: `0001_${tbl.alias}_${c.name}`
+            });
+            suggestions.push({
+              label: c.name,
+              kind: monaco.languages.CompletionItemKind.Field,
+              insertText: c.name,
+              range: range,
+              detail: `${c.full_type || c.data_type} • ${tbl.name} (${tbl.alias})`,
+              sortText: `0002_${c.name}`
             });
           });
         });
@@ -1037,8 +1386,9 @@ function registerSqlCompletions() {
       // =========================================================================
       const isSelectingColumns = /SELECT\s+(?:DISTINCT\s+)?[^;]*$/i.test(lineUntilCursor) && !/FROM/i.test(lineUntilCursor);
       if (isSelectingColumns) {
-        // Find all tables and aliases in this query (from FROM / JOIN)
-        const queryTables = extractQueryTableAliases(model.getValue());
+        // Find all tables and aliases in this query statement (from FROM / JOIN / subqueries)
+        const currentStmt = getCurrentStatement(model, position);
+        const queryTables = extractQueryTableAliases(currentStmt);
         if (queryTables.length > 0) {
           queryTables.forEach(t => {
             // Suggest alias itself (e.g. "c")
@@ -1061,33 +1411,36 @@ function registerSqlCompletions() {
               sortText: `0000_B_star_${t.alias}`
             });
 
-            // Suggest columns qualified by this alias (e.g. "c.id", "c.nombre")
-            const cols = schemaColumnsMap[t.name] || [];
-            cols.forEach(c => {
+            if (t.name.toLowerCase() !== t.alias.toLowerCase()) {
               suggestions.push({
-                label: `${t.alias}.${c.name}`,
+                label: `${t.name}.*`,
                 kind: monaco.languages.CompletionItemKind.Field,
-                insertText: `${t.alias}.${c.name}`,
+                insertText: `${t.name}.*`,
                 range: range,
-                detail: `${c.full_type || c.data_type} • ${t.name}`,
-                sortText: `0001_${t.alias}_${c.name}`
+                detail: `⚡ Todas las columnas de ${t.name} (${t.name}.*)`,
+                sortText: `0000_C_star_${t.name}`
               });
+            }
+          });
+
+          // Suggest ONLY columns from the tables mentioned in the query
+          const colSuggestions = buildColumnSuggestions(queryTables, range, { priorityPrefix: '0001_' });
+          suggestions.push(...colSuggestions);
+        } else {
+          // If NO tables are mentioned in the query yet, suggest schema tables with auto-alias
+          schemaTables.forEach(t => {
+            const alias = generateTableAlias(t.name);
+            suggestions.push({
+              label: `${t.name} ${alias}`,
+              filterText: `${t.name} ${alias}`,
+              kind: monaco.languages.CompletionItemKind.Class,
+              insertText: `${t.name} ${alias}`,
+              range: range,
+              detail: `Tabla (${t.approx_rows ?? 0} filas aprox) • Alias: ${alias}`,
+              sortText: '03_A_' + t.name
             });
           });
         }
-        // 1. Suggest all columns from connected database
-        Object.keys(schemaColumnsMap).forEach(table => {
-          (schemaColumnsMap[table] || []).forEach(c => {
-            suggestions.push({
-              label: c.name,
-              kind: monaco.languages.CompletionItemKind.Field,
-              insertText: c.name,
-              range: range,
-              detail: `${c.full_type || c.data_type} • Tabla: ${table}`,
-              sortText: '01_' + c.name
-            });
-          });
-        });
 
         // 2. Suggest aggregate functions
         SQL_FUNCTIONS.forEach(fn => {
@@ -1115,24 +1468,20 @@ function registerSqlCompletions() {
       }
 
       // =========================================================================
-      // CONTEXT 4: WHERE / HAVING / ON / ORDER BY / GROUP BY -> SUGGEST COLUMNS
+      // CONTEXT 4: WHERE / HAVING / ON / ORDER BY / GROUP BY / SET -> SUGGEST COLUMNS
       // =========================================================================
-      const isConditionOrSort = /(?:WHERE|ON|HAVING|ORDER\s+BY|GROUP\s+BY|AND|OR)\s+[`\w]*$/i.test(lineUntilCursor);
+      const isConditionOrSort = /(?:WHERE|ON|HAVING|ORDER\s+BY|GROUP\s+BY|AND|OR|SET)\s+[`\w]*$/i.test(lineUntilCursor);
       if (isConditionOrSort) {
-        Object.keys(schemaColumnsMap).forEach(table => {
-          (schemaColumnsMap[table] || []).forEach(c => {
-            suggestions.push({
-              label: c.name,
-              kind: monaco.languages.CompletionItemKind.Field,
-              insertText: c.name,
-              range: range,
-              detail: `${c.full_type || c.data_type} • ${table}`,
-              sortText: '00_' + c.name
-            });
-          });
-        });
+        const currentStmt = getCurrentStatement(model, position);
+        const queryTables = extractQueryTableAliases(currentStmt);
 
-        // Comparison keywords
+        // Suggest ONLY columns from the tables mentioned in this query
+        if (queryTables.length > 0) {
+          const colSuggestions = buildColumnSuggestions(queryTables, range, { priorityPrefix: '00_' });
+          suggestions.push(...colSuggestions);
+        }
+
+        // Comparison keywords & modifiers
         ['IS NULL', 'IS NOT NULL', 'BETWEEN', 'LIKE', 'IN', 'ASC', 'DESC'].forEach(kw => {
           suggestions.push({
             label: kw,
@@ -1141,6 +1490,19 @@ function registerSqlCompletions() {
             range: range,
             detail: 'Operador / Modificador SQL',
             sortText: '05_' + kw
+          });
+        });
+
+        // Built-in SQL functions useful in conditions
+        SQL_FUNCTIONS.forEach(fn => {
+          suggestions.push({
+            label: fn.label,
+            kind: monaco.languages.CompletionItemKind.Function,
+            insertText: fn.insertText,
+            insertTextRules: fn.isSnippet ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
+            range: range,
+            detail: fn.detail,
+            sortText: '06_' + fn.label
           });
         });
 
@@ -1195,19 +1557,13 @@ function registerSqlCompletions() {
         });
       });
 
-      // 2. Columns (sin comillas)
-      Object.keys(schemaColumnsMap).forEach(table => {
-        (schemaColumnsMap[table] || []).forEach(c => {
-          suggestions.push({
-            label: c.name,
-            kind: monaco.languages.CompletionItemKind.Field,
-            insertText: c.name,
-            range: range,
-            detail: `${c.full_type || c.data_type} (${table})`,
-            sortText: '03_' + c.name
-          });
-        });
-      });
+      // 2. Columns: Suggest ONLY columns from the tables mentioned in the query
+      const currentStmt = getCurrentStatement(model, position);
+      const queryTables = extractQueryTableAliases(currentStmt);
+      if (queryTables.length > 0) {
+        const colSuggestions = buildColumnSuggestions(queryTables, range, { priorityPrefix: '03_' });
+        suggestions.push(...colSuggestions);
+      }
 
       // 3. SQL Keywords
       SQL_KEYWORDS.forEach(kw => {
@@ -1328,12 +1684,11 @@ function registerSqlHoverProvider() {
 
       // 2. If not a direct table match and not a reserved keyword, check if it's an alias in this query
       if (!resolvedTableName && !SQL_KEYWORDS.has(hoveredWord.toUpperCase())) {
-        const queryTables = extractQueryTableAliases(model.getValue());
+        const currentStmt = getCurrentStatement(model, position);
+        const queryTables = extractQueryTableAliases(currentStmt);
         const foundAlias = queryTables.find(t => t.alias && t.alias.toLowerCase() === hoveredWord.toLowerCase());
         if (foundAlias) {
-          resolvedTableName = Object.keys(schemaColumnsMap).find(
-            t => t.toLowerCase() === foundAlias.name.toLowerCase()
-          ) || foundAlias.name;
+          resolvedTableName = getCanonicalTableName(foundAlias.name);
           matchedAlias = foundAlias.alias;
         }
       }
@@ -1373,12 +1728,7 @@ function registerSqlHoverProvider() {
       if (!resolvedTableName) return null;
 
       // Retrieve columns for this table (case-insensitive lookup)
-      let columns = schemaColumnsMap[resolvedTableName];
-      if (!columns) {
-        const actualKey = Object.keys(schemaColumnsMap).find(k => k.toLowerCase() === resolvedTableName.toLowerCase());
-        if (actualKey) columns = schemaColumnsMap[actualKey];
-      }
-      columns = columns || [];
+      let columns = getColumnsForTable(resolvedTableName);
 
       // Find approx row count
       const tableInfo = schemaTables.find(t => t.name.toLowerCase() === resolvedTableName.toLowerCase());
@@ -1457,20 +1807,41 @@ async function createEditor(domElement, initialValue = '', onRunCallback = null,
       wordBasedSuggestions: "off" // Prioritize our intelligent semantic provider
     });
 
+    // Function to accurately resolve query to run:
+    // 1. Explicitly selected text if non-empty
+    // 2. Or the statement under the cursor (delimited by semicolons outside comments & strings)
+    // 3. Or the entire document
+    function resolveQueryToExecute() {
+      const selection = editor.getSelection();
+      if (selection && !selection.isEmpty()) {
+        const selectedText = editor.getModel().getValueInRange(selection);
+        if (selectedText && selectedText.trim().length > 0) {
+          return selectedText.trim();
+        }
+      }
+
+      const position = editor.getPosition();
+      if (position) {
+        const currentStmt = getCurrentStatement(editor.getModel(), position);
+        if (currentStmt && currentStmt.trim().length > 0) {
+          return currentStmt.trim();
+        }
+      }
+
+      return (editor.getValue() || '').trim();
+    }
+
     // Add Ctrl+Enter or Cmd+Enter command
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
       if (onRunCallback) {
-        const selection = editor.getSelection();
-        const selectedText = editor.getModel().getValueInRange(selection);
-        const queryToRun = selectedText && selectedText.trim() ? selectedText : editor.getValue();
-        onRunCallback(queryToRun);
+        onRunCallback(resolveQueryToExecute());
       }
     });
 
     // Add F5 command
     editor.addCommand(monaco.KeyCode.F5, () => {
       if (onRunCallback) {
-        onRunCallback(editor.getValue());
+        onRunCallback(resolveQueryToExecute());
       }
     });
 
@@ -1481,13 +1852,48 @@ async function createEditor(domElement, initialValue = '', onRunCallback = null,
       }
     });
 
+    // Context Menu Action: "▶ Ejecutar selección o consulta activa"
+    editor.addAction({
+      id: 'exec-query-selection',
+      label: '▶ Ejecutar selección o consulta activa',
+      keybindings: [
+        monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter
+      ],
+      contextMenuGroupId: 'navigation',
+      contextMenuOrder: 1,
+      run: () => {
+        if (onRunCallback) {
+          onRunCallback(resolveQueryToExecute());
+        }
+      }
+    });
+
+    // Context Menu Action: "⚡ Plan EXPLAIN de consulta"
+    editor.addAction({
+      id: 'explain-query-selection',
+      label: '⚡ Plan EXPLAIN de consulta activa',
+      contextMenuGroupId: 'navigation',
+      contextMenuOrder: 2,
+      run: () => {
+        if (window.app && window.app.queryExec) {
+          const sql = resolveQueryToExecute();
+          window.app.queryExec.runExplain(sql, window.app.currentDatabase);
+        }
+      }
+    });
+
     return {
       getValue: () => editor.getValue(),
       setValue: (val) => editor.setValue(val),
       getSelectedText: () => {
         const sel = editor.getSelection();
-        return editor.getModel().getValueInRange(sel);
+        if (sel && !sel.isEmpty()) {
+          const txt = editor.getModel().getValueInRange(sel);
+          if (txt && txt.trim()) return txt.trim();
+        }
+        return '';
       },
+      getQueryToRun: () => resolveQueryToExecute(),
       format: () => {
         editor.getAction('editor.action.formatDocument')?.run();
       },
@@ -1503,10 +1909,26 @@ async function createEditor(domElement, initialValue = '', onRunCallback = null,
     const textarea = domElement.querySelector('textarea');
     textarea.value = initialValue;
 
+    function resolveTextareaQuery() {
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      if (typeof start === 'number' && typeof end === 'number' && start !== end) {
+        const selText = textarea.value.substring(start, end).trim();
+        if (selText) return selText;
+      }
+      const cursorOffset = textarea.selectionStart || 0;
+      const currentStmt = getCurrentStatement(textarea.value, cursorOffset);
+      if (currentStmt && currentStmt.trim()) return currentStmt.trim();
+      return (textarea.value || '').trim();
+    }
+
     textarea.addEventListener('keydown', (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
-        if (onRunCallback) onRunCallback(textarea.value);
+        if (onRunCallback) onRunCallback(resolveTextareaQuery());
+      } else if (e.key === 'F5') {
+        e.preventDefault();
+        if (onRunCallback) onRunCallback(resolveTextareaQuery());
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
         if (onSaveCallback) onSaveCallback(textarea.value);
@@ -1517,8 +1939,14 @@ async function createEditor(domElement, initialValue = '', onRunCallback = null,
       getValue: () => textarea.value,
       setValue: (val) => { textarea.value = val; },
       getSelectedText: () => {
-        return textarea.value.substring(textarea.selectionStart, textarea.selectionEnd);
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        if (typeof start === 'number' && typeof end === 'number' && start !== end) {
+          return textarea.value.substring(start, end).trim();
+        }
+        return '';
       },
+      getQueryToRun: () => resolveTextareaQuery(),
       format: () => {},
       focus: () => textarea.focus(),
       layout: () => {},
