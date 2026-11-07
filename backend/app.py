@@ -322,6 +322,71 @@ def export_json(req: ExportRequest):
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
 
+@app.post("/api/export/xlsx")
+def export_xlsx(req: ExportRequest):
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="El paquete 'openpyxl' no está instalado. Ejecute: pip install openpyxl"
+        )
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Resultados"
+
+    # Header styling
+    header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    thin_side = Side(style="thin", color="CBD5E1")
+    cell_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+    data_font = Font(name="Segoe UI", size=10)
+    null_font = Font(name="Segoe UI", size=10, italic=True, color="94A3B8")
+
+    # Header row
+    for col_idx, col_name in enumerate(req.columns, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=col_name)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_align
+        cell.border = cell_border
+
+    # Data rows
+    for row_idx, row_data in enumerate(req.rows, start=2):
+        for col_idx, val in enumerate(row_data, start=1):
+            cell = ws.cell(row=row_idx, column=col_idx, value=val)
+            cell.border = cell_border
+            if val is None:
+                cell.font = null_font
+                cell.value = "NULL"
+            else:
+                cell.font = data_font
+
+    # Column widths
+    for col in ws.columns:
+        col_letter = get_column_letter(col[0].column)
+        max_len = max(len(str(cell.value or '')) for cell in col)
+        ws.column_dimensions[col_letter].width = min(max(max_len + 3, 12), 60)
+
+    # Freeze header row
+    ws.freeze_panes = "A2"
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    filename = f"{req.filename or 'export'}.xlsx"
+    return Response(
+        content=output.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
 # --- Frontend Static Files ---
 frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
 if os.path.exists(frontend_dir):

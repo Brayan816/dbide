@@ -29,10 +29,13 @@ Un IDE moderno, ligero y rápido para administrar y consultar bases de datos MyS
    - Formateador SQL integrado.
 
 4. **Visor de Datos y Resultados:**
-   - Tabla interactiva con ordenamiento de columnas al hacer clic.
-   - Indicador de valores `NULL` y recuento de filas afectadas/devueltas.
-   - Medición precisa de tiempo de respuesta (en milisegundos).
-   - Exportación de resultados a **CSV** (con codificación UTF-8 compatible con Excel) y **JSON**.
+   - Tabla interactiva con ordenamiento de columnas al hacer clic y **Virtual Scrolling** de alto rendimiento (60 FPS con miles de filas).
+   - Selector dinámico de límite de filas (`50`, `100`, `250`, `500`, `1000`, `5000`, `Sin límite`).
+   - Pestañas dinámicas y numeradas para ejecuciones múltiples (`Resultado 1`, `Resultado 2`, etc.).
+   - Control unificado de exportación **Split Button** con soporte para:
+     - 📊 **Excel (.xlsx):** Libro de cálculo nativo con encabezados formateados y congelados.
+     - 📄 **CSV (.csv):** Valores delimitados por comas con codificación UTF-8 BOM compatible con Microsoft Excel.
+     - 💻 **JSON (.json):** Array estructurado de objetos JSON.
 
 5. **Historial de Consultas:**
    - Registro persistente de consultas ejecutadas con fecha, duración, estado y botón para recargar la consulta en el editor con un solo clic.

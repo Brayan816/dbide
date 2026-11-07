@@ -169,12 +169,45 @@
             </div>
             <div style="width:1px; height:18px; background:rgba(255,255,255,0.1); margin:0 2px;"></div>
             <span id="resultStatsBadge" style="font-size:11px; color:var(--text-muted); margin-right:4px;"></span>
-            <button class="btn btn-sm" id="btnExportCsv" title="Exportar resultados a CSV">
-              <i data-lucide="file-spreadsheet"></i> CSV
-            </button>
-            <button class="btn btn-sm" id="btnExportJson" title="Exportar resultados a JSON">
-              <i data-lucide="file-code"></i> JSON
-            </button>
+            <!-- Unified Export Split Button -->
+            <div class="export-split-group" id="exportSplitGroup">
+              <button class="export-select-btn" id="btnExportFormatSelect" title="Seleccionar formato de exportación (clic para cambiar)">
+                <i data-lucide="file-spreadsheet" id="exportFormatIcon" style="width:13px; height:13px; color:#10b981;"></i>
+                <span id="exportFormatLabel">Excel (.xlsx)</span>
+                <i data-lucide="chevron-up" id="exportFormatCaret" style="width:11px; height:11px; opacity:0.65; margin-left:2px;"></i>
+              </button>
+              <button class="export-action-btn" id="btnExportAction" title="Exportar resultados en el formato seleccionado">
+                <i data-lucide="download" style="width:13px; height:13px;"></i>
+                <span>Exportar</span>
+              </button>
+              <!-- Dropdown Menu Popup (floating above) -->
+              <div class="export-dropdown-menu" id="exportDropdownMenu" style="display:none;">
+                <div class="export-menu-item active" data-format="xlsx">
+                  <i data-lucide="file-spreadsheet" style="width:15px; height:15px; color:#10b981;"></i>
+                  <div class="export-item-info">
+                    <span class="export-item-title">Excel (.xlsx)</span>
+                    <span class="export-item-desc">Libro de cálculo estructurado con encabezados</span>
+                  </div>
+                  <i data-lucide="check" class="export-item-check" style="width:13px; height:13px;"></i>
+                </div>
+                <div class="export-menu-item" data-format="csv">
+                  <i data-lucide="file-text" style="width:15px; height:15px; color:#38bdf8;"></i>
+                  <div class="export-item-info">
+                    <span class="export-item-title">CSV (.csv)</span>
+                    <span class="export-item-desc">Valores delimitados por comas (UTF-8 BOM)</span>
+                  </div>
+                  <i data-lucide="check" class="export-item-check" style="width:13px; height:13px; display:none;"></i>
+                </div>
+                <div class="export-menu-item" data-format="json">
+                  <i data-lucide="file-code" style="width:15px; height:15px; color:#f59e0b;"></i>
+                  <div class="export-item-info">
+                    <span class="export-item-title">JSON (.json)</span>
+                    <span class="export-item-desc">Estructura estándar de objetos JSON</span>
+                  </div>
+                  <i data-lucide="check" class="export-item-check" style="width:13px; height:13px; display:none;"></i>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -497,11 +530,11 @@
   </div>
 
   <!-- Application Scripts -->
-  <script src="/static/js/monaco-setup.js?v=20261107_01"></script>
-  <script src="/static/js/schema-tree.js?v=20261107_01"></script>
-  <script src="/static/js/proc-modal.js?v=20261107_01"></script>
-  <script src="/static/js/query-exec.js?v=20261107_01"></script>
-  <script src="/static/js/app.js?v=20261107_01"></script>
+  <script src="/static/js/monaco-setup.js?v=20261107_02"></script>
+  <script src="/static/js/schema-tree.js?v=20261107_02"></script>
+  <script src="/static/js/proc-modal.js?v=20261107_02"></script>
+  <script src="/static/js/query-exec.js?v=20261107_02"></script>
+  <script src="/static/js/app.js?v=20261107_02"></script>
   <script>
     lucide.createIcons();
   </script>

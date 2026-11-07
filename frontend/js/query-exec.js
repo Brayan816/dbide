@@ -18,6 +18,7 @@ class QueryExecutor {
     this.currentRows = [];
     this.activeSelectResults = [];
     this.currentSelectIdx = 0;
+    this.currentExportFormat = localStorage.getItem('dbide_export_format') || 'xlsx';
     this.sortCol = null;
     this.sortAsc = true;
     this.unreadMessages = 0;
@@ -81,8 +82,110 @@ class QueryExecutor {
   }
 
   bindExports() {
-    document.getElementById('btnExportCsv')?.addEventListener('click', () => this.export('csv'));
-    document.getElementById('btnExportJson')?.addEventListener('click', () => this.export('json'));
+    const btnSelect = document.getElementById('btnExportFormatSelect');
+    const menuPopup = document.getElementById('exportDropdownMenu');
+    const btnAction = document.getElementById('btnExportAction');
+    const caretIcon = document.getElementById('exportFormatCaret');
+
+    // Restore saved format UI
+    this.setExportFormatUI(this.currentExportFormat);
+
+    // Toggle dropdown menu
+    btnSelect?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isOpen = menuPopup?.classList.toggle('open');
+      if (menuPopup) {
+        menuPopup.style.display = isOpen ? 'flex' : 'none';
+      }
+      if (caretIcon) {
+        caretIcon.setAttribute('data-lucide', isOpen ? 'chevron-down' : 'chevron-up');
+        if (window.lucide) lucide.createIcons();
+      }
+    });
+
+    // Handle menu option selection
+    menuPopup?.querySelectorAll('.export-menu-item').forEach(item => {
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const selectedFormat = item.dataset.format;
+        this.setExportFormatUI(selectedFormat);
+        if (menuPopup) {
+          menuPopup.classList.remove('open');
+          menuPopup.style.display = 'none';
+        }
+        if (caretIcon) {
+          caretIcon.setAttribute('data-lucide', 'chevron-up');
+          if (window.lucide) lucide.createIcons();
+        }
+        // Immediately export with the chosen format
+        this.export(selectedFormat);
+      });
+    });
+
+    // Close menu when clicking outside
+    document.addEventListener('click', (e) => {
+      if (menuPopup && menuPopup.classList.contains('open')) {
+        if (!e.target.closest('#exportSplitGroup')) {
+          menuPopup.classList.remove('open');
+          menuPopup.style.display = 'none';
+          if (caretIcon) {
+            caretIcon.setAttribute('data-lucide', 'chevron-up');
+            if (window.lucide) lucide.createIcons();
+          }
+        }
+      }
+    });
+
+    // Close menu on Escape
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && menuPopup && menuPopup.classList.contains('open')) {
+        menuPopup.classList.remove('open');
+        menuPopup.style.display = 'none';
+        if (caretIcon) {
+          caretIcon.setAttribute('data-lucide', 'chevron-up');
+          if (window.lucide) lucide.createIcons();
+        }
+      }
+    });
+
+    // Main action button click: export with current format
+    btnAction?.addEventListener('click', () => {
+      this.export(this.currentExportFormat);
+    });
+  }
+
+  setExportFormatUI(format) {
+    this.currentExportFormat = format;
+    localStorage.setItem('dbide_export_format', format);
+
+    const formatLabel = document.getElementById('exportFormatLabel');
+    const formatIcon = document.getElementById('exportFormatIcon');
+    const menuPopup = document.getElementById('exportDropdownMenu');
+
+    const meta = {
+      xlsx: { label: 'Excel (.xlsx)', icon: 'file-spreadsheet', color: '#10b981' },
+      csv: { label: 'CSV (.csv)', icon: 'file-text', color: '#38bdf8' },
+      json: { label: 'JSON (.json)', icon: 'file-code', color: '#f59e0b' }
+    }[format] || { label: 'Excel (.xlsx)', icon: 'file-spreadsheet', color: '#10b981' };
+
+    if (formatLabel) formatLabel.textContent = meta.label;
+    if (formatIcon) {
+      formatIcon.setAttribute('data-lucide', meta.icon);
+      formatIcon.style.color = meta.color;
+    }
+
+    if (menuPopup) {
+      menuPopup.querySelectorAll('.export-menu-item').forEach(item => {
+        const isSelected = item.dataset.format === format;
+        item.classList.toggle('active', isSelected);
+        const checkIcon = item.querySelector('.export-item-check');
+        if (checkIcon) {
+          checkIcon.style.display = isSelected ? 'inline-block' : 'none';
+        }
+      });
+    }
+
+    if (window.lucide) lucide.createIcons();
   }
 
   // Detection of UPDATE / DELETE without WHERE clause
@@ -630,33 +733,59 @@ class QueryExecutor {
   }
 
   async export(format) {
+    const targetFormat = format || this.currentExportFormat || 'xlsx';
     if (!this.currentColumns.length || !this.currentRows.length) {
       alert('No hay datos disponibles para exportar.');
       return;
     }
 
+    const btnAction = document.getElementById('btnExportAction');
+    const origHtml = btnAction ? btnAction.innerHTML : '';
+    if (btnAction) {
+      btnAction.disabled = true;
+      btnAction.innerHTML = '<span style="font-size:10px;">Exportando...</span>';
+    }
+
     try {
-      const res = await fetch(`/api/export/${format}`, {
+      const res = await fetch(`/api/export/${targetFormat}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           columns: this.currentColumns,
           rows: this.currentRows,
-          filename: `mysql_query_export_${Date.now()}`
+          filename: `mysql_export_${Date.now()}`
         })
       });
+
+      if (!res.ok) {
+        let errDetail = 'Error al exportar los datos.';
+        try {
+          const errJson = await res.json();
+          errDetail = errJson.detail || errJson.error || errDetail;
+        } catch (_) {}
+        throw new Error(errDetail);
+      }
 
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `mysql_export_${Date.now()}.${format}`;
+      a.download = `mysql_export_${Date.now()}.${targetFormat}`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
+
+      this.logMessage(`Exportación completada: ${this.currentRows.length} filas descargadas en ${targetFormat.toUpperCase()}.`, 'success');
     } catch (err) {
       alert(`Error al exportar: ${err.message}`);
+      this.logMessage(`Error en exportación (${targetFormat.toUpperCase()}): ${err.message}`, 'error');
+    } finally {
+      if (btnAction) {
+        btnAction.disabled = false;
+        btnAction.innerHTML = origHtml;
+        if (window.lucide) lucide.createIcons();
+      }
     }
   }
 }
