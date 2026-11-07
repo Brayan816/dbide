@@ -19,6 +19,7 @@ class QueryExecutor {
     this.activeSelectResults = [];
     this.currentSelectIdx = 0;
     this.currentExportFormat = localStorage.getItem('dbide_export_format') || 'xlsx';
+    this.lastExecutedSql = '';
     this.sortCol = null;
     this.sortAsc = true;
     this.unreadMessages = 0;
@@ -165,7 +166,9 @@ class QueryExecutor {
     const meta = {
       xlsx: { label: 'Excel (.xlsx)', icon: 'file-spreadsheet', color: '#10b981' },
       csv: { label: 'CSV (.csv)', icon: 'file-text', color: '#38bdf8' },
-      json: { label: 'JSON (.json)', icon: 'file-code', color: '#f59e0b' }
+      json: { label: 'JSON (.json)', icon: 'file-code', color: '#f59e0b' },
+      sql_insert: { label: 'SQL (INSERT)', icon: 'file-plus', color: '#a855f7' },
+      sql_update: { label: 'SQL (UPDATE)', icon: 'file-pen', color: '#ec4899' }
     }[format] || { label: 'Excel (.xlsx)', icon: 'file-spreadsheet', color: '#10b981' };
 
     if (formatLabel) formatLabel.textContent = meta.label;
@@ -375,6 +378,7 @@ class QueryExecutor {
       this.logMessage('Consulta vacía.', 'info');
       return;
     }
+    this.lastExecutedSql = sql;
 
     // Safety Check: Detect UPDATE or DELETE without WHERE
     const dangerous = this.detectDangerousStatements(sql);
@@ -739,6 +743,44 @@ class QueryExecutor {
       return;
     }
 
+    let tableName = 'tabla';
+    let keyColumn = null;
+
+    if (targetFormat === 'sql_insert' || targetFormat === 'sql_update') {
+      let defaultTable = 'tabla';
+      if (this.lastExecutedSql) {
+        const match = this.lastExecutedSql.match(/\bFROM\s+`?([a-zA-Z0-9_]+)`?/i);
+        if (match && match[1]) {
+          defaultTable = match[1];
+        }
+      }
+      const promptAction = targetFormat === 'sql_insert' ? 'INSERT' : 'UPDATE';
+      const chosenTable = window.prompt(
+        `Ingresa el nombre de la tabla para las sentencias ${promptAction}:`,
+        defaultTable
+      );
+      if (!chosenTable || !chosenTable.trim()) {
+        return; // Usuario canceló
+      }
+      tableName = chosenTable.trim();
+
+      if (targetFormat === 'sql_update') {
+        const defaultKey = this.currentColumns.find(c => {
+          const cl = c.toLowerCase();
+          return cl === 'id' || cl.startsWith('id_') || cl.endsWith('_id');
+        }) || this.currentColumns[0];
+
+        const chosenKey = window.prompt(
+          `Columna identificadora para la condición WHERE (WHERE columna = valor):\nColumnas disponibles: ${this.currentColumns.join(', ')}`,
+          defaultKey
+        );
+        if (!chosenKey || !chosenKey.trim()) {
+          return; // Usuario canceló
+        }
+        keyColumn = chosenKey.trim();
+      }
+    }
+
     const btnAction = document.getElementById('btnExportAction');
     const origHtml = btnAction ? btnAction.innerHTML : '';
     if (btnAction) {
@@ -753,7 +795,9 @@ class QueryExecutor {
         body: JSON.stringify({
           columns: this.currentColumns,
           rows: this.currentRows,
-          filename: `mysql_export_${Date.now()}`
+          filename: `mysql_export_${tableName}_${targetFormat}_${Date.now()}`,
+          table_name: tableName,
+          key_column: keyColumn
         })
       });
 
@@ -766,17 +810,19 @@ class QueryExecutor {
         throw new Error(errDetail);
       }
 
+      const ext = (targetFormat === 'sql_insert' || targetFormat === 'sql_update') ? 'sql' : targetFormat;
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `mysql_export_${Date.now()}.${targetFormat}`;
+      a.download = `mysql_export_${tableName}_${Date.now()}.${ext}`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
 
-      this.logMessage(`Exportación completada: ${this.currentRows.length} filas descargadas en ${targetFormat.toUpperCase()}.`, 'success');
+      const formatTitle = targetFormat.startsWith('sql_') ? targetFormat.toUpperCase().replace('_', ' ') : targetFormat.toUpperCase();
+      this.logMessage(`Exportación completada: ${this.currentRows.length} filas descargadas en ${formatTitle}.`, 'success');
     } catch (err) {
       alert(`Error al exportar: ${err.message}`);
       this.logMessage(`Error en exportación (${targetFormat.toUpperCase()}): ${err.message}`, 'error');

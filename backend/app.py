@@ -2,6 +2,8 @@ import os
 import io
 import csv
 import json
+import re
+import datetime
 from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional, List
 
@@ -62,6 +64,8 @@ class ExportRequest(BaseModel):
     columns: List[str]
     rows: List[List[Any]]
     filename: Optional[str] = "export"
+    table_name: Optional[str] = "tabla"
+    key_column: Optional[str] = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -384,6 +388,108 @@ def export_xlsx(req: ExportRequest):
     return Response(
         content=output.getvalue(),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+def sql_format_value(val: Any) -> str:
+    if val is None:
+        return "NULL"
+    if isinstance(val, (int, float)):
+        return str(val)
+    if isinstance(val, bool):
+        return "1" if val else "0"
+    s = str(val)
+    s = s.replace("\\", "\\\\").replace("'", "''")
+    return f"'{s}'"
+
+@app.post("/api/export/sql_insert")
+def export_sql_insert(req: ExportRequest):
+    table = req.table_name or "tabla"
+    table_clean = re.sub(r'[^a-zA-Z0-9_]', '', table) or "tabla"
+    cols_clean = [f"`{re.sub(r'[^a-zA-Z0-9_]', '', c)}`" for c in req.columns]
+    cols_str = ", ".join(cols_clean)
+
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    lines = [
+        "-- -------------------------------------------------------------",
+        "-- Exportado desde DBIDE - MySQL IDE & Debugger",
+        f"-- Fecha: {now_str}",
+        f"-- Tabla: `{table_clean}`",
+        f"-- Total registros: {len(req.rows)}",
+        "-- -------------------------------------------------------------\n"
+    ]
+
+    batch_size = 50
+    for i in range(0, len(req.rows), batch_size):
+        batch = req.rows[i:i + batch_size]
+        lines.append(f"INSERT INTO `{table_clean}` ({cols_str}) VALUES")
+        val_rows = []
+        for row in batch:
+            formatted_vals = [sql_format_value(v) for v in row]
+            val_rows.append(f"  ({', '.join(formatted_vals)})")
+        lines.append(",\n".join(val_rows) + ";\n")
+
+    sql_content = "\n".join(lines).encode("utf-8")
+    filename = f"{req.filename or 'export_insert'}.sql"
+    return Response(
+        content=sql_content,
+        media_type="application/sql",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+@app.post("/api/export/sql_update")
+def export_sql_update(req: ExportRequest):
+    table = req.table_name or "tabla"
+    table_clean = re.sub(r'[^a-zA-Z0-9_]', '', table) or "tabla"
+
+    if not req.columns or not req.rows:
+        raise HTTPException(status_code=400, detail="No hay columnas o filas para generar sentencias UPDATE")
+
+    key_col = req.key_column
+    key_idx = 0
+    if key_col and key_col in req.columns:
+        key_idx = req.columns.index(key_col)
+    else:
+        for i, col in enumerate(req.columns):
+            c_low = col.lower()
+            if c_low == 'id' or c_low.startswith('id_') or c_low.endswith('_id'):
+                key_idx = i
+                break
+
+    key_col_name = req.columns[key_idx]
+    key_col_clean = f"`{re.sub(r'[^a-zA-Z0-9_]', '', key_col_name)}`"
+    update_col_indices = [i for i in range(len(req.columns)) if i != key_idx]
+
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    lines = [
+        "-- -------------------------------------------------------------",
+        "-- Exportado desde DBIDE - MySQL IDE & Debugger",
+        f"-- Fecha: {now_str}",
+        f"-- Tabla: `{table_clean}`",
+        f"-- Clave / Condición: {key_col_clean}",
+        f"-- Total registros: {len(req.rows)}",
+        "-- -------------------------------------------------------------\n"
+    ]
+
+    for row in req.rows:
+        key_val = row[key_idx] if key_idx < len(row) else None
+        set_clauses = []
+        for c_idx in update_col_indices:
+            col_name = f"`{re.sub(r'[^a-zA-Z0-9_]', '', req.columns[c_idx])}`"
+            val = row[c_idx] if c_idx < len(row) else None
+            set_clauses.append(f"{col_name} = {sql_format_value(val)}")
+
+        if set_clauses:
+            where_val = sql_format_value(key_val)
+            lines.append(f"UPDATE `{table_clean}` SET {', '.join(set_clauses)} WHERE {key_col_clean} = {where_val};")
+        else:
+            lines.append(f"-- Fila omitida: la tabla solo tiene la columna identificadora {key_col_clean}.")
+
+    sql_content = "\n".join(lines).encode("utf-8")
+    filename = f"{req.filename or 'export_update'}.sql"
+    return Response(
+        content=sql_content,
+        media_type="application/sql",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
 

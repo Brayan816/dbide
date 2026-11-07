@@ -36,6 +36,8 @@ Un IDE moderno, ligero y rápido para administrar y consultar bases de datos MyS
      - 📊 **Excel (.xlsx):** Libro de cálculo nativo con encabezados formateados y congelados.
      - 📄 **CSV (.csv):** Valores delimitados por comas con codificación UTF-8 BOM compatible con Microsoft Excel.
      - 💻 **JSON (.json):** Array estructurado de objetos JSON.
+     - 📥 **SQL (INSERT):** Archivo `.sql` con sentencias `INSERT INTO tabla (...) VALUES (...)` agrupadas por lotes.
+     - 📝 **SQL (UPDATE):** Archivo `.sql` con sentencias `UPDATE tabla SET ... WHERE clave = ...` detectando automáticamente la columna clave primaria.
 
 5. **Historial de Consultas:**
    - Registro persistente de consultas ejecutadas con fecha, duración, estado y botón para recargar la consulta en el editor con un solo clic.
