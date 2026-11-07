@@ -1626,3 +1626,397 @@ body {
 .monaco-hover .hover-contents table tr:hover td {
   background: rgba(255, 255, 255, 0.05) !important;
 }
+
+/* ==========================================================================
+   Stored Procedure Debugger Styles (dbForge-style)
+   ========================================================================== */
+
+/* Monaco Breakpoints Gutter Glyph */
+.debug-breakpoint-glyph {
+  background: #ef4444;
+  width: 10px !important;
+  height: 10px !important;
+  border-radius: 50%;
+  margin-left: 6px;
+  margin-top: 5px;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.9);
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+
+.debug-breakpoint-glyph:hover {
+  transform: scale(1.2);
+}
+
+/* Monaco Active Execution Line Highlight */
+.debug-current-line-highlight {
+  background: rgba(234, 179, 8, 0.18) !important;
+  border-left: 3px solid #eab308 !important;
+}
+
+.debug-current-line-arrow {
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 8px solid #eab308;
+  margin-left: 6px;
+  margin-top: 5px;
+  filter: drop-shadow(0 0 3px rgba(234, 179, 8, 0.8));
+}
+
+/* Floating Debug Control Bar */
+.debug-floating-bar {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(20, 20, 24, 0.95);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  padding: 6px 14px;
+  box-shadow: 0 12px 30px -4px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(234, 179, 8, 0.25);
+  animation: debugBarFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  user-select: none;
+}
+
+@keyframes debugBarFadeIn {
+  from { opacity: 0; transform: translate(-50%, -10px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+.debug-drag-handle {
+  display: flex;
+  align-items: center;
+  cursor: grab;
+  padding: 0 2px;
+}
+
+.debug-status-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  letter-spacing: 0.2px;
+}
+
+.debug-status-pill .dbg-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.debug-status-pill.status-paused {
+  background: rgba(234, 179, 8, 0.16);
+  color: #facc15;
+  border: 1px solid rgba(234, 179, 8, 0.35);
+}
+
+.debug-status-pill.status-running {
+  background: rgba(56, 189, 248, 0.16);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+}
+
+.debug-status-pill.status-finished {
+  background: rgba(34, 197, 94, 0.16);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.35);
+}
+
+.debug-status-pill.status-error {
+  background: rgba(239, 68, 68, 0.16);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+}
+
+.debug-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-dbg-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #e4e4e7;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-dbg-action:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: #fff;
+}
+
+.btn-dbg-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-dbg-action.btn-dbg-stop:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #f87171;
+}
+
+.dbg-key-badge {
+  font-size: 9px;
+  font-family: var(--font-mono);
+  background: rgba(255, 255, 255, 0.1);
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: #a1a1aa;
+}
+
+/* Debug Bottom Drawer */
+.debug-drawer {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 240px;
+  background: #18181b;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  display: flex;
+  flex-direction: column;
+  z-index: 1050;
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.5);
+  transition: height 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.debug-drawer.minimized {
+  height: 38px;
+}
+
+.debug-drawer-header {
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  background: #1e1e24;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.debug-drawer-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.dbg-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.dbg-tab-btn:hover {
+  color: var(--text-normal);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.dbg-tab-btn.active {
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.12);
+  font-weight: 600;
+}
+
+.dbg-badge {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  background: rgba(255, 255, 255, 0.08);
+  padding: 1px 5px;
+  border-radius: 10px;
+  color: #a1a1aa;
+}
+
+.dbg-tab-btn.active .dbg-badge {
+  background: rgba(56, 189, 248, 0.25);
+  color: #7dd3fc;
+}
+
+.debug-drawer-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.debug-drawer-body {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+  background: #141417;
+}
+
+.dbg-tab-content {
+  display: none;
+  height: 100%;
+  overflow: auto;
+}
+
+.dbg-tab-content.active {
+  display: block;
+}
+
+/* Variables Table */
+.debug-vars-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.debug-vars-table th {
+  position: sticky;
+  top: 0;
+  background: #1c1c22;
+  color: var(--text-dim);
+  font-weight: 600;
+  text-align: left;
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 11px;
+}
+
+.debug-vars-table td {
+  padding: 5px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  font-family: var(--font-mono);
+  vertical-align: middle;
+}
+
+.debug-vars-table tr:hover td {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.dbg-var-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dbg-changed-pill {
+  font-size: 9px;
+  padding: 1px 4px;
+  background: rgba(234, 179, 8, 0.2);
+  color: #facc15;
+  border: 1px solid rgba(234, 179, 8, 0.35);
+  border-radius: 3px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+.debug-var-changed {
+  color: #fef08a !important;
+  font-weight: 700;
+  background: rgba(234, 179, 8, 0.15);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.row-var-changed td {
+  background: rgba(234, 179, 8, 0.04);
+}
+
+/* Breakpoints List */
+.dbg-bps-list {
+  padding: 8px 12px;
+}
+
+.dbg-bp-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-radius: 5px;
+  margin-bottom: 4px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.dbg-bp-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.dbg-bp-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ef4444;
+  margin-right: 8px;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+}
+
+.dbg-bp-label {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-normal);
+}
+
+/* Call Stack */
+.dbg-stack-list {
+  padding: 8px 12px;
+}
+
+.dbg-stack-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 5px;
+  background: rgba(56, 189, 248, 0.08);
+  border-left: 3px solid #38bdf8;
+  font-size: 12px;
+  font-weight: 500;
+  color: #e4e4e7;
+}
+
+.dbg-stack-line {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+
+/* Console Logs */
+.dbg-console-logs {
+  padding: 8px 12px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.dbg-log-entry {
+  padding: 2px 0;
+  color: #d4d4d8;
+}
+
+.dbg-log-entry.dbg-log-info { color: #94a3b8; }
+.dbg-log-entry.dbg-log-success { color: #4ade80; }
+.dbg-log-entry.dbg-log-error { color: #f87171; }

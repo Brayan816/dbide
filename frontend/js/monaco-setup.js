@@ -1826,6 +1826,7 @@ async function createEditor(domElement, initialValue = '', onRunCallback = null,
       minimap: { enabled: false },
       scrollBeyondLastLine: false,
       lineNumbers: 'on',
+      glyphMargin: true,
       roundedSelection: true,
       padding: { top: 10, bottom: 10 },
       hover: {
@@ -1924,6 +1925,49 @@ async function createEditor(domElement, initialValue = '', onRunCallback = null,
       }
     });
 
+    let breakpointDecorations = [];
+    let currentLineDecorations = [];
+
+    editor.onMouseDown((e) => {
+      if (e.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN ||
+          e.target.type === monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS) {
+        const line = e.target.position ? e.target.position.lineNumber : null;
+        if (line && window.app && window.app.debugger) {
+          window.app.debugger.toggleBreakpoint(line);
+        }
+      }
+    });
+
+    function setBreakpointsDecorations(lineNumbers) {
+      const newDecs = (lineNumbers || []).map(line => ({
+        range: new monaco.Range(line, 1, line, 1),
+        options: {
+          isWholeLine: false,
+          glyphMarginClassName: 'debug-breakpoint-glyph',
+          glyphMarginHoverMessage: { value: `Punto de interrupción en línea ${line}` }
+        }
+      }));
+      breakpointDecorations = editor.deltaDecorations(breakpointDecorations, newDecs);
+    }
+
+    function setCurrentLineDecoration(line) {
+      if (!line) {
+        currentLineDecorations = editor.deltaDecorations(currentLineDecorations, []);
+        return;
+      }
+      currentLineDecorations = editor.deltaDecorations(currentLineDecorations, [
+        {
+          range: new monaco.Range(line, 1, line, 1),
+          options: {
+            isWholeLine: true,
+            className: 'debug-current-line-highlight',
+            glyphMarginClassName: 'debug-current-line-arrow'
+          }
+        }
+      ]);
+      editor.revealLineInCenter(line);
+    }
+
     return {
       getValue: () => editor.getValue(),
       setValue: (val) => editor.setValue(val),
@@ -1936,6 +1980,9 @@ async function createEditor(domElement, initialValue = '', onRunCallback = null,
         return '';
       },
       getQueryToRun: () => resolveQueryToExecute(),
+      setBreakpointsDecorations,
+      setCurrentLineDecoration,
+      getRawEditor: () => editor,
       format: () => {
         editor.getAction('editor.action.formatDocument')?.run();
       },

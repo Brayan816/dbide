@@ -25,6 +25,7 @@ from .schema_inspector import (
     get_table_data, get_object_ddl
 )
 from .procedure_runner import get_procedure_params, execute_procedure
+from .procedure_debugger import debug_manager, ProcedureDebugger
 from .query_runner import execute_query, explain_query
 
 # --- Pydantic Models ---
@@ -53,6 +54,15 @@ class QueryRequest(BaseModel):
 
 class ProcedureExecRequest(BaseModel):
     parameters: Dict[str, Any] = Field(default_factory=dict)
+
+class DebugStartRequest(BaseModel):
+    database: str
+    procedure_name: str
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    breakpoints: List[int] = Field(default_factory=list)
+
+class DebugBreakpointsRequest(BaseModel):
+    breakpoints: List[int] = Field(default_factory=list)
 
 class SaveQueryRequest(BaseModel):
     id: Optional[str] = None
@@ -253,6 +263,68 @@ def run_procedure(database: str, proc_name: str, req: ProcedureExecRequest):
         return result
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+# --- Stored Procedure Debugger API ---
+@app.post("/api/debug/start")
+def debug_start(req: DebugStartRequest):
+    session = manager.get_active()
+    if not session:
+        raise HTTPException(status_code=400, detail="No hay una conexión activa a MySQL")
+
+    db_config = {
+        "host": session.host,
+        "port": session.port,
+        "user": session.user,
+        "password": session.password,
+        "database": req.database,
+        "ssl": session.ssl
+    }
+
+    try:
+        dbg_session = debug_manager.create_session(db_config, req.database, req.procedure_name)
+        dbg_session.start(req.parameters, req.breakpoints)
+        return {"success": True, "session": dbg_session.get_state()}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/debug/{session_id}/step")
+def debug_step(session_id: str):
+    dbg_session = debug_manager.get_session(session_id)
+    if not dbg_session:
+        raise HTTPException(status_code=404, detail="Sesión de depuración no encontrada o expirada")
+    state = dbg_session.step_over()
+    return {"success": True, "session": state}
+
+@app.post("/api/debug/{session_id}/continue")
+def debug_continue(session_id: str):
+    dbg_session = debug_manager.get_session(session_id)
+    if not dbg_session:
+        raise HTTPException(status_code=404, detail="Sesión de depuración no encontrada o expirada")
+    state = dbg_session.continue_execution()
+    return {"success": True, "session": state}
+
+@app.post("/api/debug/{session_id}/breakpoints")
+def debug_set_breakpoints(session_id: str, req: DebugBreakpointsRequest):
+    dbg_session = debug_manager.get_session(session_id)
+    if not dbg_session:
+        raise HTTPException(status_code=404, detail="Sesión de depuración no encontrada o expirada")
+    dbg_session.set_breakpoints(req.breakpoints)
+    return {"success": True, "session": dbg_session.get_state()}
+
+@app.post("/api/debug/{session_id}/stop")
+def debug_stop(session_id: str):
+    dbg_session = debug_manager.get_session(session_id)
+    if not dbg_session:
+        return {"success": True, "message": "Sesión no encontrada o ya detenida"}
+    state = dbg_session.stop()
+    return {"success": True, "session": state}
+
+@app.get("/api/debug/{session_id}/state")
+def debug_state(session_id: str):
+    dbg_session = debug_manager.get_session(session_id)
+    if not dbg_session:
+        raise HTTPException(status_code=404, detail="Sesión de depuración no encontrada")
+    return {"success": True, "session": dbg_session.get_state()}
 
 # --- Query API ---
 @app.post("/api/query/execute")

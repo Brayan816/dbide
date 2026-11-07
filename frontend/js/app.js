@@ -16,6 +16,7 @@ class App {
     this.schemaTree = new SchemaTree('schemaTree', (action, payload) => this.handleSchemaAction(action, payload));
     this.procModal = new ProcedureModal();
     this.queryExec = new QueryExecutor();
+    this.debugger = new StoredProcedureDebugger();
 
     this.initElements();
     this.bindEvents();
@@ -579,6 +580,9 @@ class App {
           <button class="btn btn-primary btn-sm btn-run-query" title="Ejecutar consulta seleccionada o activa (${execHint})">
             <i data-lucide="play" style="width:13px; height:13px;"></i> Ejecutar
           </button>
+          <button class="btn btn-sm btn-debug-proc" title="Depurar procedimiento paso a paso (F10 / Step-by-Step)" style="border-color:rgba(245,158,11,0.35); color:#f59e0b;">
+            <i data-lucide="bug" style="width:13px; height:13px; color:#f59e0b;"></i> Depurar
+          </button>
           <button class="btn btn-sm btn-explain-query" title="Plan EXPLAIN de la consulta seleccionada o activa">
             <i data-lucide="activity" style="width:13px; height:13px;"></i> Explicar
           </button>
@@ -646,6 +650,24 @@ class App {
         }
         this.onAutoCollapseTrigger();
         this.queryExec.run(sql, this.currentDatabase);
+      }
+    });
+
+    pane.querySelector('.btn-debug-proc')?.addEventListener('click', () => {
+      let procName = tabObj.targetProcedure;
+      if (!procName && tabObj.editorInstance) {
+        const txt = tabObj.editorInstance.getValue();
+        const m = txt.match(/\bCREATE\s+(?:DEFINER\s*=\s*[^\s]+\s+)?PROCEDURE\s+`?([a-zA-Z0-9_]+)`?/i);
+        if (m) procName = m[1];
+      }
+
+      if (!procName) {
+        alert('Para iniciar la depuración, abre o define un procedimiento almacenado en este editor.');
+        return;
+      }
+
+      if (this.debugger) {
+        this.debugger.prepareAndStartDebug(this.currentDatabase, procName, tabObj);
       }
     });
 
