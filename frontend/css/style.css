@@ -1048,6 +1048,42 @@ body {
   color: #fff;
 }
 
+.th-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+}
+
+.th-col-name {
+  font-weight: 600;
+  color: #d4d4d8;
+}
+
+.col-type-tag {
+  font-size: 9.5px;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  color: #94a3b8;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 1px 4px;
+  border-radius: 3px;
+  letter-spacing: 0.2px;
+  pointer-events: none;
+  text-transform: uppercase;
+  line-height: 1.2;
+}
+
+.data-table th:hover .th-col-name {
+  color: #fff;
+}
+
+.data-table th:hover .col-type-tag {
+  border-color: rgba(255, 255, 255, 0.16);
+  color: #cbd5e1;
+}
+
 .data-table tr {
   height: 29px;
   box-sizing: border-box;

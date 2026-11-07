@@ -573,7 +573,7 @@ class QueryExecutor {
       }
 
       this.renderSingleCustomTab('Plan EXPLAIN', data.rows.length);
-      this.renderTable(data.columns, data.rows);
+      this.renderTable(data.columns, data.rows, data.column_types);
       this.switchTab('panelResults');
       this.statsBadge.textContent = `⚡ EXPLAIN (${data.duration_ms} ms) | ${data.rows.length} fila${data.rows.length === 1 ? '' : 's'}`;
       this.logMessage(`Plan EXPLAIN completado (${data.duration_ms} ms): ${data.rows.length} filas analizadas.`, 'info');
@@ -649,7 +649,7 @@ class QueryExecutor {
     }
 
     const sel = this.activeSelectResults[idx];
-    this.renderTable(sel.columns, sel.rows);
+    this.renderTable(sel.columns, sel.rows, sel.column_types);
 
     const countInfo = sel.is_limited
       ? `${sel.rows.length} de ${sel.total_count} filas (limitado a ${sel.limit})`
@@ -673,19 +673,28 @@ class QueryExecutor {
     if (window.lucide) lucide.createIcons();
   }
 
-  renderTable(columns, rows) {
+  renderTable(columns, rows, columnTypes = []) {
     this.currentColumns = columns || [];
     this.currentRows = rows || [];
+    this.currentColumnTypes = columnTypes || [];
     this.sortCol = null;
     this.sortAsc = true;
 
     if (this.emptyState) this.emptyState.style.display = 'none';
     if (this.resultsTable) this.resultsTable.style.display = 'table';
 
-    // Render Headers
+    // Render Headers with Column Data Types
     let headHtml = '<tr><th style="width:46px; text-align:center; user-select:none;">#</th>';
     this.currentColumns.forEach((col, idx) => {
-      headHtml += `<th data-col-idx="${idx}" title="Clic para ordenar">${this.escapeHtml(col)} <span class="sort-icon" style="font-size:10px; opacity:0.6;"></span></th>`;
+      const typeStr = (this.currentColumnTypes && this.currentColumnTypes[idx]) ? this.currentColumnTypes[idx] : '';
+      const typeBadge = typeStr ? `<span class="col-type-tag" title="Tipo: ${typeStr}">${this.escapeHtml(typeStr)}</span>` : '';
+      headHtml += `<th data-col-idx="${idx}" title="Clic para ordenar por ${this.escapeHtml(col)}">
+        <div class="th-content">
+          <span class="th-col-name">${this.escapeHtml(col)}</span>
+          ${typeBadge}
+          <span class="sort-icon" style="font-size:10px; opacity:0.6; margin-left:2px;"></span>
+        </div>
+      </th>`;
     });
     headHtml += '</tr>';
     this.resultsHead.innerHTML = headHtml;
@@ -769,12 +778,21 @@ class QueryExecutor {
     this.resultsHead.querySelectorAll('th[data-col-idx]').forEach(th => {
       const idx = parseInt(th.dataset.colIdx, 10);
       const iconSpan = th.querySelector('.sort-icon');
+      const nameSpan = th.querySelector('.th-col-name');
       if (idx === colIdx) {
         th.style.color = '#38bdf8';
-        if (iconSpan) iconSpan.textContent = this.sortAsc ? ' ▲' : ' ▼';
+        if (nameSpan) nameSpan.style.color = '#38bdf8';
+        if (iconSpan) {
+          iconSpan.style.color = '#38bdf8';
+          iconSpan.textContent = this.sortAsc ? ' ▲' : ' ▼';
+        }
       } else {
         th.style.color = '';
-        if (iconSpan) iconSpan.textContent = '';
+        if (nameSpan) nameSpan.style.color = '';
+        if (iconSpan) {
+          iconSpan.style.color = '';
+          iconSpan.textContent = '';
+        }
       }
     });
 

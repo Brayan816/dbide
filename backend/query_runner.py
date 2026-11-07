@@ -5,6 +5,37 @@ import pymysql
 from .db_manager import manager, serialize_value
 from .storage import add_history
 
+MYSQL_TYPE_MAP = {
+    0: "DECIMAL",
+    1: "TINYINT",
+    2: "SMALLINT",
+    3: "INT",
+    4: "FLOAT",
+    5: "DOUBLE",
+    6: "NULL",
+    7: "TIMESTAMP",
+    8: "BIGINT",
+    9: "MEDIUMINT",
+    10: "DATE",
+    11: "TIME",
+    12: "DATETIME",
+    13: "YEAR",
+    14: "NEWDATE",
+    15: "VARCHAR",
+    16: "BIT",
+    245: "JSON",
+    246: "DECIMAL",
+    247: "ENUM",
+    248: "SET",
+    249: "TINYBLOB",
+    250: "MEDIUMBLOB",
+    251: "LONGBLOB",
+    252: "BLOB",
+    253: "VARCHAR",
+    254: "CHAR",
+    255: "GEOMETRY",
+}
+
 def execute_query(sql: str, database: Optional[str] = None, limit: Optional[int] = 100) -> Dict[str, Any]:
     session = manager.get_active()
     if not session:
@@ -33,6 +64,7 @@ def execute_query(sql: str, database: Optional[str] = None, limit: Optional[int]
             while has_more:
                 if cursor.description:
                     cols = [d[0] for d in cursor.description]
+                    col_types = [MYSQL_TYPE_MAP.get(d[1], "VARCHAR") for d in cursor.description]
                     rows = cursor.fetchall()
                     total_count = len(rows)
                     is_limited = False
@@ -49,6 +81,7 @@ def execute_query(sql: str, database: Optional[str] = None, limit: Optional[int]
                         "statement_index": stmt_idx,
                         "type": "SELECT",
                         "columns": cols,
+                        "column_types": col_types,
                         "rows": serialized_rows,
                         "row_count": len(serialized_rows),
                         "total_count": total_count,
@@ -149,6 +182,7 @@ def explain_query(sql: str, database: Optional[str] = None) -> Dict[str, Any]:
             cursor.execute(f"USE `{target_db}`")
         cursor.execute(f"EXPLAIN {sql}")
         cols = [d[0] for d in cursor.description]
+        col_types = [MYSQL_TYPE_MAP.get(d[1], "VARCHAR") for d in cursor.description]
         rows = cursor.fetchall()
         serialized_rows = [[serialize_value(c) for c in r] for r in rows]
     duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
@@ -157,5 +191,6 @@ def explain_query(sql: str, database: Optional[str] = None) -> Dict[str, Any]:
         "success": True,
         "duration_ms": duration_ms,
         "columns": cols,
+        "column_types": col_types,
         "rows": serialized_rows
     }
