@@ -332,6 +332,11 @@ class StoredProcedureDebugger {
       if (tabObj && tabObj.editorInstance) {
         const fullDdl = tabObj.editorInstance.getValue();
         if (fullDdl && fullDdl.trim()) {
+          const m = fullDdl.match(/\bCREATE\s+(?:DEFINER\s*=\s*[^\s]+\s+)?PROCEDURE\s+`?([a-zA-Z0-9_]+)`?/i);
+          if (m) {
+            procedureName = m[1];
+            this.currentProcedure = procedureName;
+          }
           try {
             await fetch('/api/query/execute', {
               method: 'POST',
@@ -342,6 +347,11 @@ class StoredProcedureDebugger {
             console.warn('Could not auto-compile procedure before debug:', e);
           }
         }
+      }
+
+      // Reset previous results in panel
+      if (window.app && window.app.queryExec) {
+        window.app.queryExec.renderResultsTabs([], 0);
       }
 
       // Check parameters required
@@ -546,6 +556,10 @@ class StoredProcedureDebugger {
           window.app.queryExec.renderResultsTabs(selectResults, session.duration_ms);
           window.app.queryExec.selectResultTab(0, session.duration_ms);
           window.app.queryExec.switchTab('panelResults');
+        }
+      } else {
+        if (window.app && window.app.queryExec) {
+          window.app.queryExec.renderResultsTabs([], session.duration_ms);
         }
       }
 

@@ -1990,10 +1990,10 @@ async function createEditor(domElement, initialValue = '', onRunCallback = null,
       }
     });
 
-    // Add F5 command
+    // Add F5 command: Executes full script (all continuous queries)
     editor.addCommand(monaco.KeyCode.F5, () => {
       if (onRunCallback) {
-        onRunCallback(resolveQueryToExecute());
+        onRunCallback(editor.getValue());
       }
     });
 

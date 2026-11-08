@@ -621,8 +621,67 @@ class App {
     };
     this.tabs.push(tabObj);
 
+    // Saving logic for tab (supports normal query bookmarks and routine compiling to MySQL)
+    const saveTabAction = async (explicitSql) => {
+      if (!tabObj.editorInstance) return;
+
+      if (tabObj.isRoutineTab || tabObj.targetProcedure) {
+        const fullDdl = tabObj.editorInstance.getValue();
+        let procName = tabObj.targetProcedure;
+        if (!procName) {
+          const m = fullDdl.match(/\bCREATE\s+(?:DEFINER\s*=\s*[^\s]+\s+)?(?:PROCEDURE|FUNCTION)\s+`?([a-zA-Z0-9_]+)`?/i);
+          if (m) procName = m[1];
+        }
+
+        this.onAutoCollapseTrigger();
+        this.queryExec.logMessage(`Compilando y guardando procedimiento '${procName || ''}'...`, 'info');
+        this.queryExec.setLoading(true);
+
+        try {
+          const compRes = await fetch('/api/query/execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sql: fullDdl, database: this.currentDatabase })
+          });
+          const compData = await compRes.json();
+          this.queryExec.setLoading(false);
+
+          if (!compRes.ok || !compData.success) {
+            const err = compData.error || compData.detail || 'Error al compilar el procedimiento';
+            this.queryExec.logMessage(`❌ Error de compilación en procedimiento: ${err}`, 'error');
+            this.queryExec.switchTab('panelMessages');
+            alert(`Error al compilar procedimiento:\n${err}`);
+            return;
+          }
+
+          this.queryExec.logMessage(`✓ Procedimiento '${procName}' guardado y compilado con éxito en MySQL.`, 'success');
+          this.queryExec.switchTab('panelMessages');
+          if (typeof this.queryExec.showCopyToast === 'function') {
+            this.queryExec.showCopyToast(`✓ Procedimiento '${procName}' guardado y compilado`);
+          }
+
+          if (procName) {
+            tabObj.targetProcedure = procName;
+            const titleSpan = tabObj.tabElement.querySelector('.tab-title');
+            if (titleSpan) titleSpan.textContent = `Editar: ${procName}`;
+          }
+
+          if (this.currentDatabase) {
+            this.loadSchema(this.currentDatabase);
+          }
+        } catch (err) {
+          this.queryExec.setLoading(false);
+          this.queryExec.logMessage(`❌ Error al guardar procedimiento: ${err.message}`, 'error');
+          this.queryExec.switchTab('panelMessages');
+        }
+        return;
+      }
+
+      this.openSaveQueryModal(tabObj, explicitSql);
+    };
+
     // Execution logic for tab (supports normal queries and stored procedure compilation + execution)
-    const executeTabAction = async (explicitSql) => {
+    const executeTabAction = async (explicitSql, runFullTabIfNoSelection = false) => {
       if (!tabObj.editorInstance) return;
 
       const selText = (typeof tabObj.editorInstance.getSelectedText === 'function')
@@ -695,7 +754,9 @@ class App {
 
       let sql = explicitSql || '';
       if (!sql) {
-        if (typeof tabObj.editorInstance.getQueryToRun === 'function') {
+        if (runFullTabIfNoSelection) {
+          sql = tabObj.editorInstance.getValue();
+        } else if (typeof tabObj.editorInstance.getQueryToRun === 'function') {
           sql = tabObj.editorInstance.getQueryToRun();
         } else {
           sql = tabObj.editorInstance.getValue();
@@ -713,7 +774,7 @@ class App {
       (sql) => {
         executeTabAction(sql);
       },
-      (sql) => { this.openSaveQueryModal(tabObj, sql); }
+      (sql) => { saveTabAction(sql); }
     ).then(editor => {
       tabObj.editorInstance = editor;
       if (tabObj.isRoutineTab) {
@@ -723,7 +784,7 @@ class App {
 
     // Toolbar buttons
     pane.querySelector('.btn-run-query').addEventListener('click', () => {
-      executeTabAction();
+      executeTabAction(null, true);
     });
 
     pane.querySelector('.btn-debug-proc')?.addEventListener('click', () => {
@@ -745,7 +806,7 @@ class App {
     });
 
     pane.querySelector('.btn-save-tab-query').addEventListener('click', () => {
-      this.openSaveQueryModal(tabObj);
+      saveTabAction();
     });
 
     pane.querySelector('.btn-explain-query').addEventListener('click', () => {
@@ -1054,6 +1115,51 @@ class App {
       }
     } else if (action === 'run_procedure') {
       this.procModal.open(this.currentDatabase, payload.name);
+    } else if (action === 'drop_procedure') {
+      this.dropProcedure(payload.name);
+    }
+  }
+
+  async dropProcedure(name) {
+    if (!name || !this.currentDatabase) return;
+    const ok = confirm(`¿Estás seguro de que deseas eliminar el procedimiento almacenado '${name}' de la base de datos '${this.currentDatabase}'?\n\nEsta acción no se puede deshacer.`);
+    if (!ok) return;
+
+    try {
+      this.queryExec.logMessage(`Eliminando procedimiento almacenado '${name}'...`, 'info');
+      this.queryExec.setLoading(true);
+
+      const res = await fetch(`/api/schema/databases/${encodeURIComponent(this.currentDatabase)}/procedures/${encodeURIComponent(name)}`, {
+        method: 'DELETE'
+      });
+      const data = await res.json();
+      this.queryExec.setLoading(false);
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.detail || data.error || 'Error al eliminar el procedimiento');
+      }
+
+      this.queryExec.logMessage(`✓ Procedimiento '${name}' eliminado con éxito de MySQL.`, 'success');
+      this.queryExec.switchTab('panelMessages');
+      if (typeof this.queryExec.showCopyToast === 'function') {
+        this.queryExec.showCopyToast(`✓ Procedimiento '${name}' eliminado`);
+      }
+
+      // Close open tab for this procedure if open
+      const openTab = this.tabs.find(t => 
+        t.targetProcedure === name || t.title === `Editar: ${name}` || t.title === `Editar ${name}`
+      );
+      if (openTab) {
+        this.closeTab(openTab.id);
+      }
+
+      // Refresh schema
+      await this.loadSchema(this.currentDatabase);
+    } catch (err) {
+      this.queryExec.setLoading(false);
+      this.queryExec.logMessage(`❌ Error al eliminar procedimiento '${name}': ${err.message}`, 'error');
+      this.queryExec.switchTab('panelMessages');
+      alert(`Error al eliminar procedimiento '${name}':\n${err.message}`);
     }
   }
 
@@ -1089,8 +1195,13 @@ class App {
         if (icon) {
           icon.setAttribute('data-lucide', 'file-code');
           icon.style.color = '#34d399';
-          if (window.lucide) lucide.createIcons();
         }
+        const saveBtn = tabObj.paneElement?.querySelector('.btn-save-tab-query');
+        if (saveBtn) {
+          saveBtn.setAttribute('title', 'Guardar y compilar procedimiento en MySQL (Ctrl+S)');
+          saveBtn.innerHTML = '<i data-lucide="save" style="width:13px; height:13px;"></i> Guardar';
+        }
+        if (window.lucide) lucide.createIcons();
       }
     } catch (err) {
       console.error('Error al abrir editor de procedimiento:', err);

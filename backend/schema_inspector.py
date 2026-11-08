@@ -83,6 +83,23 @@ def get_database_objects(database: str) -> Dict[str, Any]:
         """, (database,))
         procedures = cursor.fetchall()
 
+        # Automatic cleanup of residual/orphan debug procedures in MySQL
+        try:
+            cursor.execute("""
+                SELECT ROUTINE_NAME
+                FROM information_schema.ROUTINES
+                WHERE LOWER(ROUTINE_SCHEMA) = LOWER(%s)
+                  AND ROUTINE_TYPE = 'PROCEDURE'
+                  AND ROUTINE_NAME LIKE '__dbide_dbg_%%'
+            """, (database,))
+            orphan_procs = cursor.fetchall()
+            for orph in orphan_procs:
+                orph_name = orph.get("ROUTINE_NAME") or orph.get("name")
+                if orph_name:
+                    cursor.execute(f"DROP PROCEDURE IF EXISTS `{database}`.`{orph_name}`")
+        except Exception:
+            pass
+
         # Functions
         cursor.execute("""
             SELECT 

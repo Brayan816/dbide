@@ -49,11 +49,15 @@ class SchemaTree {
     const { database, tables, views, procedures, functions, triggers } = this.currentData;
 
     // Filter items
-    const matchesFilter = (name) => !this.filterText || name.toLowerCase().includes(this.filterText);
+    const matchesFilter = (name) => {
+      if (!name || name.startsWith('__dbide_')) return false;
+      return !this.filterText || name.toLowerCase().includes(this.filterText);
+    };
 
+    const cleanProcedures = procedures.filter(p => !p.name.startsWith('__dbide_'));
     const fTables = tables.filter(t => matchesFilter(t.name));
     const fViews = views.filter(v => matchesFilter(v.name));
-    const fProcedures = procedures.filter(p => matchesFilter(p.name));
+    const fProcedures = cleanProcedures.filter(p => matchesFilter(p.name));
     const fFunctions = functions.filter(f => matchesFilter(f.name));
     const fTriggers = triggers.filter(tr => matchesFilter(tr.name));
 
@@ -126,6 +130,7 @@ class SchemaTree {
           </div>
           <div class="tree-item-actions">
             <button class="action-icon act-edit-proc" title="Editar Procedimiento"><i data-lucide="edit-3" style="width:12px; height:12px;"></i></button>
+            <button class="action-icon act-drop-proc" title="Eliminar Procedimiento" style="color:#ef4444;"><i data-lucide="trash-2" style="width:12px; height:12px;"></i></button>
           </div>
         </div>
       `).join('')
@@ -291,6 +296,14 @@ class SchemaTree {
         actEditProc.addEventListener('click', (e) => {
           e.stopPropagation();
           if (this.onSelectObject) this.onSelectObject('edit_procedure', { name });
+        });
+      }
+
+      const actDropProc = item.querySelector('.act-drop-proc');
+      if (actDropProc) {
+        actDropProc.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (this.onSelectObject) this.onSelectObject('drop_procedure', { name });
         });
       }
 

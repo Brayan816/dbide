@@ -264,6 +264,20 @@ def run_procedure(database: str, proc_name: str, req: ProcedureExecRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+@app.delete("/api/schema/databases/{database}/procedures/{proc_name}")
+def delete_procedure(database: str, proc_name: str):
+    session = manager.get_active()
+    if not session:
+        raise HTTPException(status_code=400, detail="No hay una conexión activa a MySQL")
+    conn = session.get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(f"USE `{database}`")
+            cursor.execute(f"DROP PROCEDURE IF EXISTS `{database}`.`{proc_name}`")
+        return {"success": True, "message": f"Procedimiento '{proc_name}' eliminado correctamente."}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 # --- Stored Procedure Debugger API ---
 @app.post("/api/debug/start")
 def debug_start(req: DebugStartRequest):

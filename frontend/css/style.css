@@ -614,6 +614,11 @@ body {
   background: var(--bg-tertiary);
 }
 
+.action-icon.act-drop-proc:hover {
+  color: #f87171 !important;
+  background: rgba(239, 68, 68, 0.15) !important;
+}
+
 /* Workspace (Right of sidebar) */
 .app-workspace {
   flex: 1;

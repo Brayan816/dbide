@@ -586,23 +586,43 @@ class QueryExecutor {
     }
   }
 
+  clearTable() {
+    this.currentColumns = [];
+    this.currentRows = [];
+    this.currentColumnTypes = [];
+    this.sortCol = null;
+    this.sortAsc = true;
+    if (this.resultsHead) this.resultsHead.innerHTML = '';
+    if (this.resultsBody) this.resultsBody.innerHTML = '';
+    if (this.resultsTable) this.resultsTable.style.display = 'none';
+    if (this.emptyState) this.emptyState.style.display = 'flex';
+  }
+
   renderResultsTabs(selectResults, durationMs) {
     this.activeSelectResults = selectResults || [];
     this.resultsNav = document.getElementById('resultsNavTabs') || document.querySelector('.results-header .results-nav');
     if (!this.resultsNav) return;
 
     if (!selectResults || selectResults.length === 0) {
+      this.currentSelectIdx = 0;
       this.resultsNav.innerHTML = `
         <button class="results-tab-btn active" data-idx="0">
           <i data-lucide="table-2" style="width:13px; height:13px;"></i>
           <span>Resultados</span>
         </button>
       `;
+      this.clearTable();
       if (window.lucide) lucide.createIcons();
       return;
     }
 
+    // Always guard currentSelectIdx within bounds of the new result sets
+    if (this.currentSelectIdx >= selectResults.length || this.currentSelectIdx < 0) {
+      this.currentSelectIdx = 0;
+    }
+
     if (selectResults.length === 1) {
+      this.currentSelectIdx = 0;
       const sr = selectResults[0];
       const countLabel = sr.is_limited ? `${sr.rows.length}/${sr.total_count}` : `${sr.rows.length}`;
       this.resultsNav.innerHTML = `
@@ -638,7 +658,13 @@ class QueryExecutor {
   }
 
   selectResultTab(idx, durationMs) {
-    if (!this.activeSelectResults || !this.activeSelectResults[idx]) return;
+    if (!this.activeSelectResults || this.activeSelectResults.length === 0) {
+      this.clearTable();
+      return;
+    }
+    if (idx < 0 || idx >= this.activeSelectResults.length) {
+      idx = 0;
+    }
     this.currentSelectIdx = idx;
 
     if (this.resultsNav) {

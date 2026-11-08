@@ -186,6 +186,9 @@ class ProcedureModal {
       });
       this.resultSetsDisplay.innerHTML = setsHtml;
     } else {
+      if (window.app && window.app.queryExec) {
+        window.app.queryExec.renderResultsTabs([], result.duration_ms);
+      }
       this.resultSetsDisplay.innerHTML = `
         <div class="msg-entry msg-success">
           ${result.message || 'Procedimiento ejecutado correctamente sin conjuntos de datos de retorno.'}
