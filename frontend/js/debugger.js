@@ -175,9 +175,10 @@ class StoredProcedureDebugger {
     if (!modal) {
       modal = document.createElement('div');
       modal.id = 'modalDebugParams';
-      modal.className = 'modal-backdrop';
+      modal.className = 'modal-overlay';
+      modal.style.zIndex = '1050';
       modal.innerHTML = `
-        <div class="modal-box" style="max-width:480px;">
+        <div class="modal-dialog" style="max-width:480px;">
           <div class="modal-header">
             <div class="title-wrap" style="display:flex; align-items:center; gap:8px;">
               <i data-lucide="bug" style="width:16px; height:16px; color:#f59e0b;"></i>
@@ -200,6 +201,10 @@ class StoredProcedureDebugger {
         </div>
       `;
       document.body.appendChild(modal);
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.classList.remove('open');
+      });
 
       modal.querySelectorAll('.btn-close-dbg-modal, .btn-cancel-dbg-modal').forEach(btn => {
         btn.addEventListener('click', () => modal.classList.remove('open'));
@@ -274,7 +279,7 @@ class StoredProcedureDebugger {
 
   syncBreakpointsUI() {
     const lines = Array.from(this.breakpoints).sort((a, b) => a - b);
-    
+
     // Update Monaco editor decorations across tabs
     if (window.app && window.app.tabs) {
       window.app.tabs.forEach(t => {
