@@ -18,7 +18,19 @@ class SchemaTree {
   }
 
   setData(data) {
-    this.currentData = data;
+    if (data) {
+      const isInternal = (name) => name && name.toLowerCase().startsWith('__dbide_');
+      this.currentData = {
+        ...data,
+        tables: (data.tables || []).filter(t => !isInternal(t.name)),
+        views: (data.views || []).filter(v => !isInternal(v.name)),
+        procedures: (data.procedures || []).filter(p => !isInternal(p.name)),
+        functions: (data.functions || []).filter(f => !isInternal(f.name)),
+        triggers: (data.triggers || []).filter(tr => !isInternal(tr.name))
+      };
+    } else {
+      this.currentData = null;
+    }
     this.render();
   }
 

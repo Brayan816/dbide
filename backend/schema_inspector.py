@@ -1,6 +1,7 @@
 from typing import List, Dict, Any, Optional
 import pymysql.cursors
 from .db_manager import manager, serialize_value
+from .procedure_debugger import cleanup_all_shadow_procedures
 
 def get_databases() -> List[str]:
     session = manager.get_active()
@@ -30,6 +31,12 @@ def get_database_objects(database: str) -> Dict[str, Any]:
             else:
                 raise ValueError("No se ha seleccionado ninguna base de datos")
 
+    # Limpiar automáticamente cualquier procedimiento sombra huérfano de depuración previa
+    try:
+        cleanup_all_shadow_procedures(database)
+    except Exception:
+        pass
+
     with conn.cursor(pymysql.cursors.DictCursor) as cursor:
         # Tables
         cursor.execute("""
@@ -40,7 +47,9 @@ def get_database_objects(database: str) -> Dict[str, Any]:
                 DATA_LENGTH as data_length,
                 TABLE_COMMENT as comment
             FROM information_schema.TABLES 
-            WHERE LOWER(TABLE_SCHEMA) = LOWER(%s) AND TABLE_TYPE = 'BASE TABLE'
+            WHERE LOWER(TABLE_SCHEMA) = LOWER(%s) 
+              AND TABLE_TYPE = 'BASE TABLE'
+              AND TABLE_NAME NOT LIKE '__dbide_%%'
             ORDER BY TABLE_NAME
         """, (database,))
         tables = cursor.fetchall()
@@ -51,7 +60,9 @@ def get_database_objects(database: str) -> Dict[str, Any]:
                 TABLE_NAME as name,
                 TABLE_COMMENT as comment
             FROM information_schema.TABLES 
-            WHERE LOWER(TABLE_SCHEMA) = LOWER(%s) AND TABLE_TYPE = 'VIEW'
+            WHERE LOWER(TABLE_SCHEMA) = LOWER(%s) 
+              AND TABLE_TYPE = 'VIEW'
+              AND TABLE_NAME NOT LIKE '__dbide_%%'
             ORDER BY TABLE_NAME
         """, (database,))
         views = cursor.fetchall()
@@ -65,7 +76,9 @@ def get_database_objects(database: str) -> Dict[str, Any]:
                 LAST_ALTERED as modified,
                 DEFINER as definer
             FROM information_schema.ROUTINES
-            WHERE LOWER(ROUTINE_SCHEMA) = LOWER(%s) AND ROUTINE_TYPE = 'PROCEDURE'
+            WHERE LOWER(ROUTINE_SCHEMA) = LOWER(%s) 
+              AND ROUTINE_TYPE = 'PROCEDURE'
+              AND ROUTINE_NAME NOT LIKE '__dbide_%%'
             ORDER BY ROUTINE_NAME
         """, (database,))
         procedures = cursor.fetchall()
@@ -80,7 +93,9 @@ def get_database_objects(database: str) -> Dict[str, Any]:
                 LAST_ALTERED as modified,
                 DEFINER as definer
             FROM information_schema.ROUTINES
-            WHERE LOWER(ROUTINE_SCHEMA) = LOWER(%s) AND ROUTINE_TYPE = 'FUNCTION'
+            WHERE LOWER(ROUTINE_SCHEMA) = LOWER(%s) 
+              AND ROUTINE_TYPE = 'FUNCTION'
+              AND ROUTINE_NAME NOT LIKE '__dbide_%%'
             ORDER BY ROUTINE_NAME
         """, (database,))
         functions = cursor.fetchall()
@@ -95,6 +110,7 @@ def get_database_objects(database: str) -> Dict[str, Any]:
                 CREATED as created
             FROM information_schema.TRIGGERS
             WHERE LOWER(TRIGGER_SCHEMA) = LOWER(%s)
+              AND TRIGGER_NAME NOT LIKE '__dbide_%%'
             ORDER BY TRIGGER_NAME
         """, (database,))
         triggers = cursor.fetchall()
@@ -104,6 +120,7 @@ def get_database_objects(database: str) -> Dict[str, Any]:
             SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, COLUMN_TYPE
             FROM information_schema.COLUMNS
             WHERE LOWER(TABLE_SCHEMA) = LOWER(%s)
+              AND TABLE_NAME NOT LIKE '__dbide_%%'
             ORDER BY TABLE_NAME, ORDINAL_POSITION
         """, (database,))
         raw_cols = cursor.fetchall()

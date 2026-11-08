@@ -371,6 +371,13 @@ class DebugSession:
                     self.status = "ERROR"
                     self.error_message = str(e)
         finally:
+            # Limpiar inmediatamente el procedimiento sombra de la base de datos tras la ejecución
+            if self.shadow_proc_name:
+                try:
+                    with conn_exec.cursor() as cur:
+                        cur.execute(f"DROP PROCEDURE IF EXISTS `{self.database}`.`{self.shadow_proc_name}`;")
+                except Exception:
+                    pass
             self.state_event.set()
 
     def _wait_for_next_checkpoint(self, timeout: float = 3.0) -> bool:
@@ -530,6 +537,36 @@ class DebugManager:
                 except Exception:
                     pass
             self._sessions.clear()
+        cleanup_all_shadow_procedures()
 
 debug_manager = DebugManager()
+
+def cleanup_all_shadow_procedures(database: Optional[str] = None):
+    """Elimina cualquier procedimiento sombra huérfano (__dbide_dbg_%) de MySQL."""
+    session = manager.get_active()
+    if not session:
+        return
+    try:
+        conn = session.get_connection()
+        target_db = database or session.database
+        if not target_db:
+            return
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT ROUTINE_NAME 
+                FROM information_schema.ROUTINES 
+                WHERE LOWER(ROUTINE_SCHEMA) = LOWER(%s) 
+                  AND ROUTINE_TYPE = 'PROCEDURE' 
+                  AND ROUTINE_NAME LIKE '__dbide_dbg_%%'
+            """, (target_db,))
+            rows = cur.fetchall()
+            for r in rows:
+                p_name = r[0] if isinstance(r, (list, tuple)) else r.get("ROUTINE_NAME")
+                if p_name:
+                    try:
+                        cur.execute(f"DROP PROCEDURE IF EXISTS `{target_db}`.`{p_name}`;")
+                    except Exception:
+                        pass
+    except Exception:
+        pass
 

@@ -543,7 +543,13 @@ class App {
 
       // Update autocomplete in Monaco
       if (typeof updateSchemaCompletions === 'function') {
-        updateSchemaCompletions(data.tables || [], data.columns_by_table || {}, data.foreign_keys || []);
+        const cleanProcs = (data.procedures || []).filter(p => p.name && !p.name.startsWith('__dbide_'));
+        updateSchemaCompletions(
+          data.tables || [],
+          data.columns_by_table || {},
+          data.foreign_keys || [],
+          cleanProcs
+        );
       }
     } catch (err) {
       console.error('Error loading schema', err);

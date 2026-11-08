@@ -5,6 +5,7 @@ let monacoLoadPromise = null;
 let schemaTables = [];  // Array of { name, approx_rows }
 let schemaColumnsMap = {}; // { tableName: [ { name, data_type, full_type } ] }
 let schemaForeignKeys = []; // Array of { table_name, column_name, ref_table, ref_column, constraint_name }
+let schemaProcedures = []; // Array of { name, comment, ... }
 let fkRelationshipsMap = {}; // Lowercase table -> Array of { targetTable, targetCol, sourceTable, sourceCol, desc, isExplicit }
 
 // MySQL Data Types with rich documentation and snippet placeholders
@@ -843,29 +844,33 @@ function initMonacoLoader() {
       window.require(['vs/editor/editor.main'], function () {
         monacoReady = true;
 
-        // Enhance SQL syntax highlighting: Make sure JOIN keywords (INNER, JOIN, LEFT, RIGHT, etc.)
-        // and LATERAL are classified as keywords (BLUE #569cd6) instead of operators (WHITE #d4d4d4)
+        // Enhance SQL syntax highlighting: Make sure CALL, procedure words, and JOIN keywords
+        // are classified as keywords (BLUE #569cd6) instead of operators or default white text
         try {
           window.require(['vs/basic-languages/sql/sql'], function (sqlModule) {
             if (sqlModule && sqlModule.language) {
-              const joinKeywords = [
+              const removeOperators = [
                 'JOIN', 'INNER', 'LEFT', 'RIGHT', 'FULL', 'CROSS', 'OUTER', 
-                'NATURAL', 'STRAIGHT_JOIN', 'LATERAL', 'APPLY', 'UNION', 'INTERSECT', 'EXCEPT'
+                'NATURAL', 'STRAIGHT_JOIN', 'LATERAL', 'APPLY', 'UNION', 'INTERSECT', 'EXCEPT',
+                'CALL', 'PROCEDURE', 'PROCEDURES', 'FUNCTION', 'FUNCTIONS', 'ROUTINE', 'ROUTINES'
               ];
 
-              // 1. Remove JOIN words from operators array so Monaco doesn't tokenize them as "operator" (which renders white)
+              // 1. Remove from operators array so Monaco doesn't tokenize them as "operator" (which renders white)
               if (Array.isArray(sqlModule.language.operators)) {
                 sqlModule.language.operators = sqlModule.language.operators.filter(
-                  op => !joinKeywords.includes(op.toUpperCase())
+                  op => !removeOperators.includes(op.toUpperCase())
                 );
               }
 
-              // 2. Ensure all JOIN words and LATERAL are in the keywords array so they tokenize as "keyword" (BLUE)
+              // 2. Ensure all procedure keywords and JOIN words are in the keywords array so they tokenize as "keyword" (BLUE)
               if (Array.isArray(sqlModule.language.keywords)) {
                 const allBlueKeywords = [
+                  'CALL', 'PROCEDURE', 'PROCEDURES', 'FUNCTION', 'FUNCTIONS',
+                  'ROUTINE', 'ROUTINES', 'DEFINER', 'INVOKER', 'DETERMINISTIC',
                   'LATERAL', 'STRAIGHT_JOIN', 'NATURAL', 'CROSS', 'OUTER', 
                   'INNER', 'JOIN', 'LEFT', 'RIGHT', 'FULL', 'ON', 'USING',
-                  'WINDOW', 'OVER', 'PARTITION', 'QUALIFY', 'RECURSIVE', 'APPLY'
+                  'WINDOW', 'OVER', 'PARTITION', 'QUALIFY', 'RECURSIVE', 'APPLY',
+                  'DECLARE', 'BEGIN', 'END'
                 ];
                 allBlueKeywords.forEach(kw => {
                   if (!sqlModule.language.keywords.includes(kw)) {
@@ -878,7 +883,18 @@ function initMonacoLoader() {
                 });
               }
 
-              // 3. Re-register the updated Monarch Token Provider for SQL
+              // 3. Prepend explicit tokenizer rules in tokenizer.root for CALL and procedure keywords
+              if (sqlModule.language.tokenizer && Array.isArray(sqlModule.language.tokenizer.root)) {
+                sqlModule.language.tokenizer.root.unshift(
+                  [/\b(?:CALL|call)\b/, 'keyword'],
+                  [/\b(?:PROCEDURE|procedure|PROCEDURES|procedures)\b/, 'keyword'],
+                  [/\b(?:FUNCTION|function|FUNCTIONS|functions)\b/, 'keyword'],
+                  [/\b(?:ROUTINE|routine|ROUTINES|routines)\b/, 'keyword'],
+                  [/\b(?:DEFINER|definer|INVOKER|invoker)\b/, 'keyword']
+                );
+              }
+
+              // 4. Re-register the updated Monarch Token Provider for SQL
               monaco.languages.setMonarchTokensProvider('sql', sqlModule.language);
             }
           });
@@ -1029,6 +1045,53 @@ function registerSqlCompletions() {
             detail: 'Plantilla de columna ID primaria autoincremental',
             sortText: '00_id_pk'
           });
+          return { suggestions };
+        }
+      }
+
+      // =========================================================================
+      // CONTEXT: AFTER "CALL" -> SUGGEST STORED PROCEDURES
+      // e.g. "CALL ", "call ", "CALL Ob...", "CALL `db`."
+      // =========================================================================
+      const isAfterCall = /\bCALL\s+(?:[`\w]+\.)?([`\w]*)$/i.test(lineUntilCursor) ||
+                          /\bCALL\s+(?:[`\w]+\.)?([`\w]*)$/i.test(fullTextBefore);
+      if (isAfterCall) {
+        schemaProcedures.forEach((proc, idx) => {
+          const procName = proc.name || (typeof proc === 'string' ? proc : '');
+          if (!procName || procName.toLowerCase().startsWith('__dbide_')) return;
+
+          const seq = String(idx).padStart(2, '0');
+          const comment = proc.comment ? ` • ${proc.comment}` : '';
+
+          // Option 1: Procedure call snippet with cursor positioned inside parentheses: proc(${1});
+          suggestions.push({
+            label: `${procName}()`,
+            filterText: `${procName} CALL ${procName}`,
+            kind: monaco.languages.CompletionItemKind.Method,
+            insertText: `${procName}(\${1});`,
+            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+            range: range,
+            detail: `⚡ Procedimiento Almacenado${comment}`,
+            documentation: {
+              value: `Llamar al procedimiento almacenado **${procName}**:\n\`\`\`sql\nCALL ${procName}();\n\`\`\``
+            },
+            sortText: `00_A_${seq}_${procName}`
+          });
+
+          // Option 2: Plain procedure name insert
+          suggestions.push({
+            label: procName,
+            filterText: `${procName} CALL ${procName}`,
+            kind: monaco.languages.CompletionItemKind.Function,
+            insertText: `${procName}(\${1});`,
+            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+            range: range,
+            detail: `⚡ Procedimiento Almacenado • Inserta ${procName}();`,
+            sortText: `00_B_${seq}_${procName}`
+          });
+        });
+
+        if (suggestions.length > 0) {
           return { suggestions };
         }
       }
@@ -1624,6 +1687,25 @@ function registerSqlCompletions() {
         });
       });
 
+      // 4.b Stored Procedures (CALL mi_proc())
+      schemaProcedures.forEach(proc => {
+        const procName = proc.name || (typeof proc === 'string' ? proc : '');
+        if (!procName || procName.toLowerCase().startsWith('__dbide_')) return;
+        suggestions.push({
+          label: `CALL ${procName}()`,
+          filterText: `CALL ${procName} ${procName}`,
+          kind: monaco.languages.CompletionItemKind.Method,
+          insertText: `CALL ${procName}(\${1});`,
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          range: range,
+          detail: `⚡ Procedimiento Almacenado • ${proc.comment || 'CALL ' + procName}`,
+          documentation: {
+            value: `Ejecutar procedimiento almacenado **${procName}**:\n\`\`\`sql\nCALL ${procName}();\n\`\`\``
+          },
+          sortText: '04_A_CALL_' + procName
+        });
+      });
+
       // 5. Common Templates / Snippets (sin comillas)
       suggestions.push({
         label: 'SELECT * FROM ...',
@@ -1716,6 +1798,29 @@ function registerSqlHoverProvider() {
         }
       }
 
+      // Check if hoveredWord is a known Stored Procedure
+      const procMatch = schemaProcedures.find(p => {
+        const pName = p.name || (typeof p === 'string' ? p : '');
+        return pName.toLowerCase() === hoveredWord.toLowerCase();
+      });
+      if (procMatch) {
+        const pName = procMatch.name || procMatch;
+        let procMd = `### ⚙️ Procedimiento Almacenado: \`${pName}\`\n\n`;
+        if (procMatch.comment) {
+          procMd += `> ${procMatch.comment}\n\n`;
+        }
+        procMd += `\`\`\`sql\nCALL \`${pName}\`();\n\`\`\`\n`;
+        return {
+          range: new monaco.Range(
+            position.lineNumber,
+            wordAtPosition.startColumn,
+            position.lineNumber,
+            wordAtPosition.endColumn
+          ),
+          contents: [{ value: procMd }]
+        };
+      }
+
       // 2. If not a direct table match and not a reserved keyword, check if it's an alias in this query
       if (!resolvedTableName && !SQL_KEYWORDS.has(hoveredWord.toUpperCase())) {
         const currentStmt = getCurrentStatement(model, position);
@@ -1804,10 +1909,14 @@ function registerSqlHoverProvider() {
 }
 
 // Update autocomplete items with current database schema
-function updateSchemaCompletions(tables, columnsMap = {}, foreignKeys = []) {
+function updateSchemaCompletions(tables, columnsMap = {}, foreignKeys = [], procedures = []) {
   schemaTables = Array.isArray(tables) ? tables : [];
   schemaColumnsMap = columnsMap || {};
   schemaForeignKeys = Array.isArray(foreignKeys) ? foreignKeys : [];
+  schemaProcedures = Array.isArray(procedures) ? procedures.filter(p => {
+    const pName = p.name || (typeof p === 'string' ? p : '');
+    return pName && !pName.toLowerCase().startsWith('__dbide_');
+  }) : [];
   buildForeignKeyGraph();
 }
 
